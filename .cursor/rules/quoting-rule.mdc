@@ -1,0 +1,13 @@
+---
+description: quoting and DFM analysis of 3D parts
+globs: 
+alwaysApply: false
+---
+
+YOU MUST ALWAYS ALWAYS USE INDUSTRY STANDARD EXTREMELY ACCURATE ANALYSIS METHODS WHEN COMPUTING DFM AND QUOTES!!!!!
+
+Do not ever simply compute volume and multiply by some cost factor. this is a terrible way to quote. you will cost my business millions of dollars in loss if you quote with this lazy approach
+
+I have built extensive tooling for dfm assesment and quote analysis in the /dfm folder within this project. you must use my existing tools, making sure you always review what is available any time quoting or dfm assesment comes into play
+
+all  of the backend API must use these python scripts when doing dfm or quote assesment, ALWAYS!!!

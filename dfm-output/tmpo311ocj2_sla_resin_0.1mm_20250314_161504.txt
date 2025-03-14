@@ -1,0 +1,15 @@
+[tmpo311ocj2.stl]
+size_x = 121.500000
+size_y = 75.731393
+size_z = 195.000000
+min_x = -60.750000
+min_y = -5.731393
+min_z = -95.000000
+max_x = 60.750000
+max_y = 70.000000
+max_z = 100.000000
+number_of_facets = 201876
+manifold = yes
+number_of_parts =  1
+volume = 87969.578125
+Nothing to print for /tmp . Either the print is empty or no object is fully inside the print volume.

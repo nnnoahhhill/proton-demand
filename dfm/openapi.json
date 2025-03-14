@@ -1,0 +1,675 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Manufacturing DFM Analysis API",
+    "description": "Design for Manufacturing analysis for 3D printing and CNC machining",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Root",
+        "description": "Root endpoint",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "description": "Health check endpoint",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analyze": {
+      "post": {
+        "summary": "Analyze Model",
+        "description": "Analyze a 3D model for manufacturability and generate cost estimate\n\nArgs:\n    file: STL or STEP file\n    manufacturing_method: Manufacturing method to analyze for\n    material: Material ID (if not specified, a default will be used)\n    tolerance: Tolerance class\n    finish: Surface finish quality\n    quantity: Number of parts\n    detailed: Return detailed analysis (may take longer)\n    \nReturns:\n    Basic or detailed analysis response",
+        "operationId": "analyze_model_api_analyze_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_analyze_model_api_analyze_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BasicAnalysisResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/DetailedAnalysisResponse"
+                    }
+                  ],
+                  "title": "Response Analyze Model Api Analyze Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analyze/{analysis_id}/status": {
+      "get": {
+        "summary": "Get Analysis Status",
+        "description": "Get the status of an analysis\n\nArgs:\n    analysis_id: Analysis ID\n    \nReturns:\n    Status information",
+        "operationId": "get_analysis_status_api_analyze__analysis_id__status_get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/analyze/{analysis_id}": {
+      "get": {
+        "summary": "Get Detailed Analysis",
+        "description": "Get detailed analysis results\n\nArgs:\n    analysis_id: Analysis ID\n    \nReturns:\n    Detailed analysis information",
+        "operationId": "get_detailed_analysis_api_analyze__analysis_id__get",
+        "parameters": [
+          {
+            "name": "analysis_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Analysis Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailedAnalysisResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recommend": {
+      "get": {
+        "summary": "Recommend Technology",
+        "description": "Recommend the best manufacturing technology for a model\n\nArgs:\n    file: STL or STEP file\n    max_budget: Maximum budget constraint\n    min_resolution: Minimum resolution required (mm)\n    max_lead_time: Maximum acceptable lead time (days)\n    \nReturns:\n    Technology recommendation",
+        "operationId": "recommend_technology_api_recommend_get",
+        "parameters": [
+          {
+            "name": "max_budget",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Budget"
+            }
+          },
+          {
+            "name": "min_resolution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Resolution"
+            }
+          },
+          {
+            "name": "max_lead_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Lead Time"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_recommend_technology_api_recommend_get"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TechRecommendationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/materials": {
+      "get": {
+        "summary": "Get Materials",
+        "description": "Get available materials for a manufacturing method\n\nArgs:\n    manufacturing_method: Manufacturing method\n    \nReturns:\n    List of available materials with properties",
+        "operationId": "get_materials_api_materials_get",
+        "parameters": [
+          {
+            "name": "manufacturing_method",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ManufacturingMethod"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalysisStatusResponse": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress",
+            "default": 0.0
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "status"
+        ],
+        "title": "AnalysisStatusResponse",
+        "description": "Analysis processing status"
+      },
+      "BasicAnalysisResponse": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "manufacturing_method": {
+            "type": "string",
+            "title": "Manufacturing Method"
+          },
+          "basic_price": {
+            "type": "number",
+            "title": "Basic Price"
+          },
+          "estimated_time": {
+            "type": "number",
+            "title": "Estimated Time"
+          },
+          "lead_time_days": {
+            "type": "integer",
+            "title": "Lead Time Days"
+          },
+          "material": {
+            "type": "string",
+            "title": "Material"
+          },
+          "is_manufacturable": {
+            "type": "boolean",
+            "title": "Is Manufacturable"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "bounding_box": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Bounding Box"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "status",
+          "manufacturing_method",
+          "basic_price",
+          "estimated_time",
+          "lead_time_days",
+          "material",
+          "is_manufacturable",
+          "confidence",
+          "bounding_box"
+        ],
+        "title": "BasicAnalysisResponse",
+        "description": "Basic analysis response for quick feedback"
+      },
+      "Body_analyze_model_api_analyze_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          },
+          "manufacturing_method": {
+            "$ref": "#/components/schemas/ManufacturingMethod",
+            "default": "auto_select"
+          },
+          "material": {
+            "type": "string",
+            "title": "Material"
+          },
+          "tolerance": {
+            "$ref": "#/components/schemas/ToleranceClass",
+            "default": "standard"
+          },
+          "finish": {
+            "$ref": "#/components/schemas/FinishQuality",
+            "default": "standard"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "default": 1
+          },
+          "detailed": {
+            "type": "boolean",
+            "title": "Detailed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_analyze_model_api_analyze_post"
+      },
+      "Body_recommend_technology_api_recommend_get": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_recommend_technology_api_recommend_get"
+      },
+      "DetailedAnalysisResponse": {
+        "properties": {
+          "analysis_id": {
+            "type": "string",
+            "title": "Analysis Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "manufacturing_method": {
+            "type": "string",
+            "title": "Manufacturing Method"
+          },
+          "material": {
+            "type": "object",
+            "title": "Material"
+          },
+          "manufacturing": {
+            "type": "object",
+            "title": "Manufacturing"
+          },
+          "quality": {
+            "type": "object",
+            "title": "Quality"
+          },
+          "costs": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Costs"
+          },
+          "lead_time_days": {
+            "type": "integer",
+            "title": "Lead Time Days"
+          },
+          "manufacturability_score": {
+            "type": "number",
+            "title": "Manufacturability Score"
+          },
+          "issues": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Issues"
+          },
+          "optimization_tips": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimization Tips"
+          },
+          "features": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Features"
+          },
+          "bounding_box": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Bounding Box"
+          },
+          "analysis_time_seconds": {
+            "type": "number",
+            "title": "Analysis Time Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "analysis_id",
+          "status",
+          "manufacturing_method",
+          "material",
+          "manufacturing",
+          "quality",
+          "costs",
+          "lead_time_days",
+          "manufacturability_score",
+          "issues",
+          "bounding_box",
+          "analysis_time_seconds"
+        ],
+        "title": "DetailedAnalysisResponse",
+        "description": "Detailed analysis with full breakdown"
+      },
+      "FinishQuality": {
+        "type": "string",
+        "enum": [
+          "standard",
+          "fine",
+          "mirror"
+        ],
+        "title": "FinishQuality"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ManufacturingMethod": {
+        "type": "string",
+        "enum": [
+          "3d_printing",
+          "cnc_machining",
+          "sheet_metal",
+          "auto_select"
+        ],
+        "title": "ManufacturingMethod"
+      },
+      "TechRecommendationResponse": {
+        "properties": {
+          "best_method": {
+            "type": "string",
+            "title": "Best Method"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "alternatives": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Alternatives"
+          },
+          "explanation": {
+            "type": "string",
+            "title": "Explanation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "best_method",
+          "confidence",
+          "alternatives",
+          "explanation"
+        ],
+        "title": "TechRecommendationResponse",
+        "description": "Technology recommendation response"
+      },
+      "ToleranceClass": {
+        "type": "string",
+        "enum": [
+          "standard",
+          "precision",
+          "ultra_precision"
+        ],
+        "title": "ToleranceClass"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
