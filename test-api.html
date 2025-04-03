@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test Client</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .endpoint {
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        input[type="file"], select {
+            margin: 10px 0;
+            padding: 8px;
+        }
+        #response {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>API Test Client</h1>
+    
+    <div class="endpoint">
+        <h2>Test Minimal Endpoint</h2>
+        <p>This tests the minimal endpoint that just returns static JSON</p>
+        <button onclick="testMinimal()">Test Minimal API</button>
+        <div id="minimalResponse"></div>
+    </div>
+    
+    <div class="endpoint">
+        <h2>Test Quote Endpoint</h2>
+        <form id="quoteForm">
+            <div>
+                <label for="process">Process:</label>
+                <select id="process" name="process">
+                    <option value="CNC">CNC Machining</option>
+                    <option value="3DP_SLA">3D Printing (SLA)</option>
+                    <option value="3DP_SLS">3D Printing (SLS)</option>
+                    <option value="3DP_FDM">3D Printing (FDM)</option>
+                    <option value="SHEET_METAL">Sheet Metal</option>
+                </select>
+            </div>
+            <div>
+                <label for="material">Material:</label>
+                <select id="material" name="material">
+                    <option value="ALUMINUM_6061">Aluminum 6061</option>
+                    <option value="STAINLESS_STEEL_304">Stainless Steel 304</option>
+                    <option value="STANDARD_RESIN">Standard Resin</option>
+                    <option value="NYLON_12">Nylon 12</option>
+                    <option value="PLA">PLA</option>
+                </select>
+            </div>
+            <div>
+                <label for="finish">Finish:</label>
+                <select id="finish" name="finish">
+                    <option value="STANDARD">Standard</option>
+                    <option value="FINE">Fine</option>
+                    <option value="MIRROR">Mirror</option>
+                </select>
+            </div>
+            <div>
+                <label for="modelFile">Model File:</label>
+                <input type="file" id="modelFile" name="modelFile" accept=".stl,.step,.stp">
+            </div>
+            <button type="button" onclick="testQuote()">Get Quote</button>
+        </form>
+        <div id="quoteResponse"></div>
+    </div>
+    
+    <script>
+        async function testMinimal() {
+            const minimalOutput = document.getElementById('minimalResponse');
+            minimalOutput.innerHTML = '<p>Testing minimal endpoint...</p>';
+            
+            try {
+                const response = await fetch('/api/test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({})
+                });
+                
+                // For debugging, log raw response
+                const rawResponse = await response.text();
+                console.log('Raw response:', rawResponse);
+                
+                try {
+                    // Try to parse as JSON
+                    const result = JSON.parse(rawResponse);
+                    minimalOutput.innerHTML = `<p>Success!</p><pre>${JSON.stringify(result, null, 2)}</pre>`;
+                } catch (e) {
+                    minimalOutput.innerHTML = `<p>Error parsing JSON:</p><pre>${e}</pre><p>Raw response:</p><pre>${rawResponse}</pre>`;
+                }
+            } catch (error) {
+                minimalOutput.innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+        
+        async function testQuote() {
+            const quoteOutput = document.getElementById('quoteResponse');
+            quoteOutput.innerHTML = '<p>Getting quote...</p>';
+            
+            const process = document.getElementById('process').value;
+            const material = document.getElementById('material').value;
+            const finish = document.getElementById('finish').value;
+            const modelFile = document.getElementById('modelFile').files[0];
+            
+            if (!modelFile) {
+                quoteOutput.innerHTML = '<p>Please select a file</p>';
+                return;
+            }
+            
+            console.log("File selected:", modelFile.name, "Size:", modelFile.size, "bytes");
+            
+            const formData = new FormData();
+            
+            try {
+                // Create a blob with the file's contents and a simpler filename
+                const blob = new Blob([await modelFile.arrayBuffer()], { type: modelFile.type });
+                const fileExt = modelFile.name.split('.').pop() || '';
+                const simpleFileName = `model_file.${fileExt}`;
+                const simpleFile = new File([blob], simpleFileName, { type: modelFile.type });
+                
+                console.log("Created file with simplified name:", simpleFileName);
+                
+                // Add file with simple name
+                formData.append('model_file', simpleFile);
+                // Add original filename as a separate field
+                formData.append('original_filename', modelFile.name);
+            } catch (e) {
+                console.error("Error preparing file:", e);
+                quoteOutput.innerHTML = `<p>Error preparing file: ${e.message}</p>`;
+                return;
+            }
+            
+            formData.append('process', process);
+            formData.append('material', material);
+            formData.append('finish', finish);
+            
+            console.log("FormData created with fields:", "process, material, finish, model_file");
+            
+            try {
+                console.log("Sending request to /api/getQuote...");
+                const response = await fetch('/api/getQuote', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log("Response received:", response.status, response.statusText);
+                
+                // For debugging, log raw response
+                const rawResponse = await response.text();
+                console.log('Raw response:', rawResponse);
+                
+                try {
+                    // Try to parse as JSON
+                    const result = JSON.parse(rawResponse);
+                    quoteOutput.innerHTML = `<p>Success!</p><pre>${JSON.stringify(result, null, 2)}</pre>`;
+                } catch (e) {
+                    console.error("Error parsing JSON response:", e);
+                    quoteOutput.innerHTML = `<p>Error parsing JSON:</p><pre>${e}</pre><p>Raw response:</p><pre>${rawResponse}</pre>`;
+                }
+            } catch (error) {
+                console.error("Network error:", error);
+                quoteOutput.innerHTML = `<p>Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html> 

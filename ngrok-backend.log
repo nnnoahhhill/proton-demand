@@ -1,0 +1,11 @@
+t=2025-03-14T18:18:34-0700 lvl=info msg="no configuration paths supplied"
+t=2025-03-14T18:18:34-0700 lvl=info msg="using configuration at default config path" path=/home/noah/.config/ngrok/ngrok.yml
+t=2025-03-14T18:18:34-0700 lvl=info msg="open config file" path=/home/noah/.config/ngrok/ngrok.yml err=nil
+t=2025-03-14T18:18:34-0700 lvl=info msg="starting web service" obj=web addr=127.0.0.1:4040 allow_hosts=[]
+t=2025-03-14T18:18:34-0700 lvl=info msg="client session established" obj=tunnels.session
+t=2025-03-14T18:18:34-0700 lvl=info msg="tunnel session started" obj=tunnels.session
+t=2025-03-14T18:18:34-0700 lvl=info msg="started tunnel" obj=tunnels name=command_line addr=http://localhost:8000 url=https://629e-75-80-36-3.ngrok-free.app
+t=2025-03-14T18:18:34-0700 lvl=info msg="update available" obj=updater
+t=2025-03-14T18:19:04-0700 lvl=info msg="join connections" obj=join id=bcb14b7217b6 l=127.0.0.1:8000 r=[2600:8801:ca00:3c50:4902:c67c:df06:864a]:59520
+t=2025-03-14T18:20:09-0700 lvl=info msg="received stop request" obj=app stopReq="{err:<nil> restart:false}"
+t=2025-03-14T18:20:09-0700 lvl=info msg="session closing" obj=tunnels.session err=nil

@@ -23,7 +23,7 @@ export default function Home() {
               <h1 className="text-4xl md:text-5xl lg:text-6xl font-andale tracking-tight leading-tight md:leading-tight lg:leading-tight">
                 On-Demand Manufacturing <span className="text-[#F46036]">Without The Markup</span>
               </h1>
-              <p className="text-xl text-white/70 font-avenir">Instant quotes that actually make sense</p>
+              <p className="text-xl text-white/70 font-avenir">3D printing, CNC and sheet metal prices that actually make sense</p>
               <div className="flex flex-col sm:flex-row gap-4">
                 <GlowButton
                   asChild

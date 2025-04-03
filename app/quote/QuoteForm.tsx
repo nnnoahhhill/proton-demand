@@ -54,14 +54,50 @@ export default function QuoteForm() {
   // Handle model file selection
   const handleModelFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setModelFile(e.target.files[0]);
+      const file = e.target.files[0];
+      console.log("Model file selected:", file.name, "Size:", file.size, "bytes");
+      
+      if (file.size === 0) {
+        setError('The selected model file is empty. Please select a valid file.');
+        setModelFile(null);
+        return;
+      }
+      
+      // Check file extension
+      const fileExtension = file.name.split('.').pop()?.toLowerCase();
+      if (!fileExtension || !['stl', 'step', 'stp'].includes(fileExtension)) {
+        setError('Please upload a valid .stl or .step file.');
+        setModelFile(null);
+        return;
+      }
+      
+      setModelFile(file);
+      setError(''); // Clear any previous errors
     }
   };
   
   // Handle drawing file selection
   const handleDrawingFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setDrawingFile(e.target.files[0]);
+      const file = e.target.files[0];
+      console.log("Drawing file selected:", file.name, "Size:", file.size, "bytes");
+      
+      if (file.size === 0) {
+        setError('The selected drawing file is empty. Please select a valid file.');
+        setDrawingFile(null);
+        return;
+      }
+      
+      // Check file extension
+      const fileExtension = file.name.split('.').pop()?.toLowerCase();
+      if (!fileExtension || !['pdf'].includes(fileExtension)) {
+        setError('Please upload a valid PDF file for engineering drawings.');
+        setDrawingFile(null);
+        return;
+      }
+      
+      setDrawingFile(file);
+      setError(''); // Clear any previous errors related to file
     }
   };
   
@@ -90,6 +126,14 @@ export default function QuoteForm() {
       return;
     }
     
+    console.log("Submitting form with:", 
+      "process=", process, 
+      "material=", material, 
+      "finish=", finish, 
+      "modelFile=", modelFile.name,
+      "drawingFile=", drawingFile ? drawingFile.name : "none"
+    );
+    
     // Clear previous results
     setError('');
     setResponse(null);
@@ -106,11 +150,14 @@ export default function QuoteForm() {
         drawingFile: drawingFile || undefined
       });
       
+      console.log("API response:", quoteResponse);
+      
       // Set response
       setResponse(quoteResponse);
       
       // Check for errors
       if (!quoteResponse.success) {
+        console.error("API error:", quoteResponse.error || quoteResponse.message);
         setError(quoteResponse.error || quoteResponse.message || 'Failed to get quote');
       }
     } catch (err) {
