@@ -7,10 +7,11 @@ This guide provides comprehensive instructions for setting up the environment re
 1. [Setting Up the Python Environment](#1-setting-up-the-python-environment)
 2. [Installing and Configuring PrusaSlicer](#2-installing-and-configuring-prusaslicer)
 3. [Installing OpenCascade (for STEP File Support)](#3-installing-opencascade-for-step-file-support)
-4. [Testing Your Environment](#4-testing-your-environment)
-5. [Troubleshooting Common Issues](#5-troubleshooting-common-issues)
-6. [Verifying the Complete System](#6-verifying-the-complete-system)
-7. [Advanced Configuration](#7-advanced-configuration)
+4. [Stripe and Slack Integration](#4-stripe-and-slack-integration)
+5. [Testing Your Environment](#5-testing-your-environment)
+6. [Troubleshooting Common Issues](#6-troubleshooting-common-issues)
+7. [Verifying the Complete System](#7-verifying-the-complete-system)
+8. [Advanced Configuration](#8-advanced-configuration)
 
 ## 1. Setting Up the Python Environment
 
@@ -116,7 +117,65 @@ import OCC.Core.BRepPrimAPI
 print("OpenCascade is installed correctly!")
 ```
 
-## 4. Testing Your Environment
+## 4. Stripe and Slack Integration
+
+This section covers how to set up Stripe for payment processing and Slack for order notifications.
+
+### Updating Your Existing Environment
+
+If you already have a conda environment set up, you can update it with the required packages:
+
+```bash
+# Activate your existing environment
+conda activate dfm-env
+
+# Update from the updated environment.yml file
+conda env update -f environment.yml --prune
+```
+
+Alternatively, you can install the packages directly:
+
+```bash
+# Activate your environment
+conda activate dfm-env
+
+# Install Stripe and Slack packages
+pip install stripe>=5.0.0 slack_sdk>=3.19.0 python-dotenv>=1.0.0 aiofiles>=23.1.0
+```
+
+### Setting Up Environment Variables
+
+Create a `.env` file in the project root directory with your API keys:
+
+```
+# Stripe API keys
+STRIPE_PUBLIC_KEY=pk_test_your_public_key
+STRIPE_SECRET_KEY=sk_test_your_secret_key
+STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
+
+# Slack API
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/your/webhook/url
+SLACK_CHANNEL_ID=C0123456789
+```
+
+### Verifying the Integration
+
+To verify that the packages are installed correctly:
+
+```bash
+# Check installed packages
+conda list | grep stripe
+conda list | grep slack
+
+# Test Stripe import
+python -c "import stripe; print('Stripe version:', stripe.__version__)"
+
+# Test Slack import
+python -c "import slack_sdk; print('Slack SDK version:', slack_sdk.__version__)"
+```
+
+## 5. Testing Your Environment
 
 Now let's verify that everything is set up correctly:
 
@@ -139,7 +198,7 @@ def check_module(module_name, package_name=None):
     """Check if a Python module is available"""
     if package_name is None:
         package_name = module_name
-    
+
     try:
         importlib.import_module(module_name)
         print(f"✅ {package_name} is installed")
@@ -167,7 +226,7 @@ def main():
     print("=== Python Environment Check ===")
     print(f"Python version: {sys.version}")
     print("")
-    
+
     print("=== Required Python Packages ===")
     required_modules = [
         ("numpy", "NumPy"),
@@ -175,30 +234,30 @@ def main():
         ("pymeshlab", "PyMeshLab"),
         ("fastapi", "FastAPI"),
     ]
-    
+
     for module, name in required_modules:
         check_module(module, name)
-    
+
     print("")
     print("=== Optional Python Packages ===")
     optional_modules = [
         ("OCC.Core", "pythonocc-core (OpenCascade)"),
         ("open3d", "Open3D"),
     ]
-    
+
     for module, name in optional_modules:
         check_module(module, name)
-    
+
     print("")
     print("=== External Dependencies ===")
-    
+
     # Check PrusaSlicer
     prusa_commands = [
         ["prusa-slicer", "--help"],
         ["/Applications/PrusaSlicer.app/Contents/MacOS/prusa-slicer", "--help"],
         ["C:\\Program Files\\PrusaSlicer\\prusa-slicer.exe", "--help"]
     ]
-    
+
     prusa_found = False
     for cmd in prusa_commands:
         try:
@@ -209,10 +268,10 @@ def main():
                 break
         except FileNotFoundError:
             continue
-    
+
     if not prusa_found:
         print("❌ PrusaSlicer is NOT installed or not found in common locations")
-    
+
     print("")
     print("=== Environment Check Complete ===")
 
@@ -236,7 +295,7 @@ python dfm/manufacturing_dfm_api.py
 ./test-api-python.sh
 ```
 
-## 5. Troubleshooting Common Issues
+## 6. Troubleshooting Common Issues
 
 ### PrusaSlicer Not Found
 
@@ -246,10 +305,10 @@ If the system can't find PrusaSlicer:
    ```bash
    # On macOS
    find /Applications -name "prusa-slicer"
-   
+
    # On Linux
    which prusa-slicer
-   
+
    # On Windows (PowerShell)
    Get-ChildItem -Path "C:\Program Files" -Recurse -Filter "prusa-slicer.exe"
    ```
@@ -285,7 +344,7 @@ conda install -c conda-forge pythonocc-core
 python -c "import OCC.Core.BRepPrimAPI; print('OpenCascade works!')"
 ```
 
-## 6. Verifying the Complete System
+## 7. Verifying the Complete System
 
 To verify that the entire system is working correctly:
 
@@ -310,7 +369,7 @@ To verify that the entire system is working correctly:
    tail -f backend.log
    ```
 
-## 7. Advanced Configuration
+## 8. Advanced Configuration
 
 For advanced users, you can fine-tune the system:
 

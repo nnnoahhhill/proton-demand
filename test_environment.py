@@ -12,7 +12,7 @@ def check_module(module_name, package_name=None):
     """Check if a Python module is available"""
     if package_name is None:
         package_name = module_name
-    
+
     try:
         importlib.import_module(module_name)
         print(f"✅ {package_name} is installed")
@@ -40,38 +40,42 @@ def main():
     print("=== Python Environment Check ===")
     print(f"Python version: {sys.version}")
     print("")
-    
+
     print("=== Required Python Packages ===")
     required_modules = [
         ("numpy", "NumPy"),
         ("trimesh", "Trimesh"),
         ("pymeshlab", "PyMeshLab"),
         ("fastapi", "FastAPI"),
+        ("stripe", "Stripe"),
+        ("slack_sdk", "Slack SDK"),
+        ("dotenv", "python-dotenv"),
+        ("aiofiles", "aiofiles"),
     ]
-    
+
     for module, name in required_modules:
         check_module(module, name)
-    
+
     print("")
     print("=== Optional Python Packages ===")
     optional_modules = [
         ("OCC.Core", "pythonocc-core (OpenCascade)"),
         ("open3d", "Open3D"),
     ]
-    
+
     for module, name in optional_modules:
         check_module(module, name)
-    
+
     print("")
     print("=== External Dependencies ===")
-    
+
     # Check PrusaSlicer
     prusa_commands = [
         ["prusa-slicer", "--help"],
         ["/Applications/PrusaSlicer.app/Contents/MacOS/prusa-slicer", "--help"],
         ["C:\\Program Files\\PrusaSlicer\\prusa-slicer.exe", "--help"]
     ]
-    
+
     prusa_found = False
     for cmd in prusa_commands:
         try:
@@ -82,12 +86,42 @@ def main():
                 break
         except FileNotFoundError:
             continue
-    
+
     if not prusa_found:
         print("❌ PrusaSlicer is NOT installed or not found in common locations")
-    
+
     print("")
-    print("=== Environment Check Complete ===")
+    print("\n=== Environment Variables ===")
+    env_vars = [
+        "STRIPE_PUBLIC_KEY",
+        "STRIPE_SECRET_KEY",
+        "SLACK_BOT_TOKEN",
+        "SLACK_WEBHOOK_URL",
+        "SLACK_CHANNEL_ID",
+    ]
+
+    # Check if .env file exists
+    if os.path.exists(".env"):
+        print("✅ .env file exists")
+
+        # Try to load environment variables
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            print("✅ Successfully loaded .env file")
+        except ImportError:
+            print("❌ python-dotenv not installed, can't load .env file")
+    else:
+        print("❌ .env file not found (required for Stripe and Slack integration)")
+
+    # Check for environment variables
+    for var in env_vars:
+        if os.environ.get(var):
+            print(f"✅ {var} is set")
+        else:
+            print(f"❌ {var} is not set")
+
+    print("\n=== Environment Check Complete ===")
 
 if __name__ == "__main__":
     main()
