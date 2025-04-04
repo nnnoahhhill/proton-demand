@@ -21,12 +21,10 @@ const nextConfig = {
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
   },
-  api: {
-    // Set large body size limit for file uploads (100MB)
-    bodyParser: {
-      sizeLimit: '100mb',
-    },
-    responseLimit: false,
+  // Configure large body size limit for API routes
+  serverRuntimeConfig: {
+    // Will only be available on the server side
+    maxBodySize: '100mb',
   },
   // Add CORS config for development
   async headers() {

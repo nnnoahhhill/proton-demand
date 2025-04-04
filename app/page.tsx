@@ -6,7 +6,7 @@ export default function Home() {
   return (
     <div className="flex flex-col">
       {/* Hero Section */}
-      <section className="relative py-20 md:py-32 border-b border-[#1E2A45] bg-[#0A1525] overflow-hidden">
+      <section className="relative py-12 md:py-20 border-b border-[#1E2A45] bg-[#0A1525] overflow-hidden">
         {/* Glow effect background */}
         <div className="absolute inset-0 z-0">
           <div className="absolute inset-0 bg-gradient-to-br from-[#0A1525] via-[#0C1F3D] to-[#0A1525] opacity-80"></div>
@@ -15,7 +15,7 @@ export default function Home() {
         </div>
 
         <div className="container px-4 md:px-6 relative z-10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
             <div className="space-y-6">
               <div className="inline-flex items-center rounded-none border border-[#1E2A45] bg-[#0A1525]/80 px-3 py-1 text-sm backdrop-blur-sm">
                 <span className="text-[#5fe496] font-andale">BY FOUNDERS, FOR FOUNDERS</span>
@@ -34,7 +34,7 @@ export default function Home() {
                 </GlowButton>
               </div>
             </div>
-            <div className="relative h-[500px] w-full">
+            <div className="relative h-[600px] w-full">
               <ModelCarousel />
             </div>
           </div>
@@ -42,10 +42,10 @@ export default function Home() {
       </section>
 
       {/* Why Section - Redesigned */}
-      <section className="py-20 border-b border-[#1E2A45] bg-[#0A1525]">
+      <section className="py-16 border-b border-[#1E2A45] bg-[#0A1525]">
         <div className="container px-4 md:px-6">
           <div className="max-w-5xl mx-auto">
-            <div className="max-w-3xl mx-auto mb-16 flex flex-col items-center">
+            <div className="max-w-3xl mx-auto mb-12 flex flex-col items-center">
               <div className="inline-flex items-center rounded-none border border-[#1E2A45] bg-[#0A1525]/80 px-3 py-1 text-sm mb-4">
                 <span className="text-[#5fe496] font-andale">WHY</span>
               </div>
@@ -76,10 +76,10 @@ export default function Home() {
       </section>
 
       {/* How It Works Section - Redesigned */}
-      <section className="py-20 border-b border-[#1E2A45] bg-[#0A1525]">
+      <section className="py-16 border-b border-[#1E2A45] bg-[#0A1525]">
         <div className="container px-4 md:px-6">
           <div className="max-w-5xl mx-auto">
-            <div className="max-w-3xl mx-auto mb-16 flex flex-col items-center">
+            <div className="max-w-3xl mx-auto mb-12 flex flex-col items-center">
               <div className="inline-flex items-center rounded-none border border-[#1E2A45] bg-[#0A1525]/80 px-3 py-1 text-sm mb-4">
                 <span className="text-[#F46036] font-andale">PROCESS</span>
               </div>
@@ -130,10 +130,10 @@ export default function Home() {
       </section>
 
       {/* Services Section - Redesigned */}
-      <section className="py-20 border-b border-[#1E2A45] bg-[#0A1525]">
+      <section className="py-16 border-b border-[#1E2A45] bg-[#0A1525]">
         <div className="container px-4 md:px-6">
           <div className="max-w-5xl mx-auto">
-            <div className="max-w-3xl mx-auto mb-16 flex flex-col items-center">
+            <div className="max-w-3xl mx-auto mb-12 flex flex-col items-center">
               <div className="inline-flex items-center rounded-none border border-[#1E2A45] bg-[#0A1525]/80 px-3 py-1 text-sm mb-4">
                 <span className="text-[#5fe496] font-andale">SERVICES</span>
               </div>
@@ -195,7 +195,7 @@ export default function Home() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20">
+      <section className="py-16">
         <div className="container px-4 md:px-6">
           <div className="max-w-5xl mx-auto glow-card rounded-none bg-gradient-to-r from-[#0C1F3D]/80 to-[#0A1525]/80 border border-[#1E2A45] p-12">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
