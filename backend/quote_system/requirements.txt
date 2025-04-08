@@ -1,0 +1,27 @@
+# Core Frameworks
+fastapi
+uvicorn[standard]  # For running the API server
+typer[all]         # For the CLI interface
+
+# Geometry & Mesh Processing
+numpy
+trimesh              # Core mesh loading, basic analysis, simple repairs
+pymeshlab            # Advanced mesh analysis & DFM checks (wraps MeshLab)
+pythonocc-core       # For reading STEP files
+
+# Visualization (for local CLI testing)
+pyvista              # 3D visualization
+PyQt6                # Backend for PyVista GUI (or choose PySide6)
+
+# Configuration & Utilities
+pydantic             # Data validation and settings management
+python-dotenv        # For loading .env files (API keys, config)
+requests             # For potential LLM API calls
+
+# Optional LLM Client
+google-generativeai  # For Gemini API calls
+openai               # For OpenAI API calls
+# anthropic          # For Anthropic/Claude API calls (Add if needed)
+
+# Testing
+pytest 
