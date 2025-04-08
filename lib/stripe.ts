@@ -22,6 +22,7 @@ export interface CreatePaymentIntentRequest {
     postal_code: string;
     country: string;
   };
+  specialInstructions?: string;
   metadata?: Record<string, string>;
 }
 
@@ -37,7 +38,7 @@ export interface PaymentIntentResponse {
 
 /**
  * Create a payment intent
- * 
+ *
  * @param params Payment intent request parameters
  * @returns Payment intent response
  */
@@ -65,7 +66,7 @@ export async function createPaymentIntent(params: CreatePaymentIntentRequest): P
 
 /**
  * Get the Stripe instance
- * 
+ *
  * @returns Promise resolving to the Stripe instance
  */
 export function getStripe(): Promise<Stripe | null> {

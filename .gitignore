@@ -3,8 +3,15 @@
 /.pnp
 .pnp.js
 
+# 3D model test files
 test-models/*
 /test-models
+*.stl
+*.step
+*.stp
+*.obj
+*.3mf
+*.amf
 
 # Testing
 /coverage
@@ -20,6 +27,7 @@ test-models/*
 # Misc
 .DS_Store
 *.pem
+Thumbs.db
 
 # Debug
 npm-debug.log*
@@ -30,6 +38,7 @@ yarn-error.log*
 # Local env files
 .env*.local
 .env
+!.env.example
 
 # Vercel
 .vercel
@@ -38,11 +47,55 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+dfm-env/
+.env/
+.venv/
+.python-version
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Temporary files
+/tmp/
+/temp/
+/dfm-output/
+*.tmp
+*.temp
+*.log
+
+# PrusaSlicer generated files
+*.gcode
+*.3mf.sl1
+*.conf
+*.ini
+*.config
+
 # IDE specific files
-.idea
-.vscode
+.idea/
+.vscode/
 *.swp
 *.swo
+*.sublime*
+.project
+.pydevproject
+
+# Conda environment
+/conda-env/
+/anaconda/
+
+# Project-specific files
+slicer_cache/
+material_cache/
+upload_cache/
 
 # Tailwind processed CSS
 # (usually not needed as it's generated at build time)

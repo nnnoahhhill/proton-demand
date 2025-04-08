@@ -6,7 +6,7 @@ export default function Home() {
   return (
     <div className="flex flex-col">
       {/* Hero Section */}
-      <section className="relative py-12 md:py-20 border-b border-[#1E2A45] bg-[#0A1525] overflow-hidden">
+      <section className="relative py-4 md:py-8 border-b border-[#1E2A45] bg-[#0A1525] overflow-hidden">
         {/* Glow effect background */}
         <div className="absolute inset-0 z-0">
           <div className="absolute inset-0 bg-gradient-to-br from-[#0A1525] via-[#0C1F3D] to-[#0A1525] opacity-80"></div>
@@ -14,14 +14,16 @@ export default function Home() {
           <div className="absolute inset-0 bg-gradient-to-r from-[#5fe496]/10 via-transparent to-[#F46036]/10"></div>
         </div>
 
-        <div className="container px-4 md:px-6 relative z-10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <div className="space-y-6">
+        <div className="container px-6 md:px-10 lg:px-16 pt-2 relative z-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8 items-center">
+            <div className="space-y-4 pr-0 md:pr-4">
               <div className="inline-flex items-center rounded-none border border-[#1E2A45] bg-[#0A1525]/80 px-3 py-1 text-sm backdrop-blur-sm">
                 <span className="text-[#5fe496] font-andale">BY FOUNDERS, FOR FOUNDERS</span>
               </div>
-              <h1 className="text-4xl md:text-5xl lg:text-6xl font-andale tracking-tight leading-tight md:leading-tight lg:leading-tight">
-                On-Demand Manufacturing <span className="text-[#F46036]">Without The Markup</span>
+              <h1 className="text-3xl md:text-4xl lg:text-5xl font-andale tracking-tight mb-2">
+                <span className="block leading-none">On-Demand</span>
+                <span className="block leading-none mb-1">Manufacturing</span>
+                <span className="text-[#F46036] whitespace-nowrap leading-tight">Without The Markup</span>
               </h1>
               <p className="text-xl text-white/70 font-avenir">3D printing, CNC and sheet metal prices that actually make sense</p>
               <div className="flex flex-col sm:flex-row gap-4">
@@ -34,7 +36,7 @@ export default function Home() {
                 </GlowButton>
               </div>
             </div>
-            <div className="relative h-[600px] w-full">
+            <div className="relative h-[500px] w-full pl-0 md:pl-4 -mt-8 md:-mt-12">
               <ModelCarousel />
             </div>
           </div>

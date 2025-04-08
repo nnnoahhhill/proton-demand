@@ -6,6 +6,7 @@ import { GlowButton } from "@/components/ui/glow-button";
 import { useCart } from "@/lib/cart";
 import { useRouter } from "next/navigation";
 import { ModelViewer } from "@/components/model-viewer";
+import { Spinner } from "@/components/ui/spinner";
 import { FileUp, Info, RotateCw, Eye, EyeOff } from "lucide-react";
 
 // Define the process type for stricter typing
@@ -255,7 +256,17 @@ export default function NewQuoteForm() {
   };
 
   return (
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className="grid gap-6 md:grid-cols-2 relative">
+      {/* Loading overlay */}
+      {loading && (
+        <div className="absolute inset-0 bg-[#0A1525]/80 backdrop-blur-sm z-10 flex items-center justify-center">
+          <div className="flex flex-col items-center justify-center p-8 rounded-lg">
+            <Spinner size={120} />
+            <p className="mt-6 text-xl text-white font-andale">Analyzing your model...</p>
+            <p className="mt-2 text-white/70 font-avenir">This may take a few moments</p>
+          </div>
+        </div>
+      )}
       {/* Left Column - Model Upload */}
       <div>
         <div className="border border-[#1E2A45] bg-[#0C1F3D]/50 p-4 mb-4 h-full flex flex-col">
@@ -360,15 +371,20 @@ export default function NewQuoteForm() {
               <div className="space-y-2 text-white">
                 <p><span className="font-medium">Quote ID:</span> {response.quoteId}</p>
                 <p><span className="font-medium">Price:</span> ${response.price?.toFixed(2)} {response.currency}</p>
-                <p><span className="font-medium">Lead Time:</span> {response.leadTimeInDays} days</p>
+                <p><span className="font-medium">Lead Time:</span> 10 business days</p>
                 <p><span className="font-medium">Process:</span> {process.replace('3DP_', '')} Printing</p>
                 <p><span className="font-medium">Material:</span> {material}</p>
                 <p><span className="font-medium">Finish:</span> Standard High-Quality</p>
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-4">
-              <GlowButton onClick={handleReset}>New Quote</GlowButton>
+            <div className="mt-4 flex justify-center items-center space-x-4">
+              <GlowButton
+                onClick={handleReset}
+                className="bg-[#1e87d6] text-white hover:bg-[#1e87d6]/80"
+              >
+                New Quote
+              </GlowButton>
 
               {addedToCart ? (
                 <GlowButton
@@ -380,7 +396,7 @@ export default function NewQuoteForm() {
               ) : (
                 <GlowButton
                   onClick={handleAddToCart}
-                  className="bg-[#F46036] text-white hover:bg-[#F46036]/80"
+                  className="bg-[#5fe496] text-[#0A1525] hover:bg-[#5fe496]/80"
                 >
                   Add to Cart
                 </GlowButton>
@@ -389,7 +405,7 @@ export default function NewQuoteForm() {
               {addedToCart && (
                 <GlowButton
                   onClick={handleCheckout}
-                  className="bg-[#1e87d6] text-white hover:bg-[#1e87d6]/80"
+                  className="bg-[#F46036] text-white hover:bg-[#F46036]/80"
                 >
                   View Cart
                 </GlowButton>
@@ -420,7 +436,7 @@ export default function NewQuoteForm() {
             </div>
 
             <div className="mt-4">
-              <GlowButton onClick={handleReset}>Try Again</GlowButton>
+              <GlowButton onClick={handleReset} className="bg-[#1e87d6] text-white hover:bg-[#1e87d6]/80">Try Again</GlowButton>
             </div>
           </div>
         )}
@@ -545,8 +561,8 @@ export default function NewQuoteForm() {
               </div>
 
               <div className="mt-4">
-                <GlowButton onClick={handleSubmit} className="w-full" disabled={loading}>
-                  {loading ? 'Processing...' : 'Generate Quote'}
+                <GlowButton onClick={handleSubmit} className="w-full bg-[#F46036] text-white hover:bg-[#F46036]/80" disabled={loading}>
+                  Generate Quote
                 </GlowButton>
               </div>
             </div>

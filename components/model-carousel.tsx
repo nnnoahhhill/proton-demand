@@ -29,7 +29,7 @@ const models: Model[] = [
     path: "/test-models/3DP_CupHolder.stl",
     position: [0, 0, 0],
     rotation: [0, 0, 0],
-    scale: 1.4,
+    scale: 1.6  ,
   },
   {
     id: 2,
@@ -43,7 +43,7 @@ const models: Model[] = [
     path: "/test-models/SM_DrainGrate.stl",
     position: [0, 0, 0],
     rotation: [0, 0, 0],
-    scale: 1.2,
+    scale: 1.4,
   },
 ]
 
@@ -70,7 +70,7 @@ function Model({ url, position, rotation, scale }: ModelProps) {
           const maxDim = Math.max(size.x, size.y, size.z)
 
           // Use a consistent target size for all models
-          const targetSize = 2.4 // Middle ground between too large and too small
+          const targetSize = 1.8 // Smaller size to fit better in the container
           const calculatedScale = targetSize / maxDim
 
           setNormalizedScale(calculatedScale)
@@ -170,8 +170,8 @@ export function ModelCarousel() {
   const currentModel = models[currentModelIndex]
 
   return (
-    <div className="h-[600px] w-full relative">
-      <Canvas camera={{ position: [0, 0, 5.2], fov: 48 }} gl={{ antialias: true, alpha: true }} shadows>
+    <div className="h-[500px] w-full relative">
+      <Canvas camera={{ position: [0, 0, 5.2], fov: 44 }} gl={{ antialias: true, alpha: true }} shadows>
         <ambientLight intensity={0.6} />
         <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1.2} castShadow />
         <directionalLight position={[-5, 5, -5]} intensity={0.7} />
@@ -189,8 +189,8 @@ export function ModelCarousel() {
           enableZoom={true}
           autoRotate
           autoRotateSpeed={1.2}
-          minDistance={3.5}
-          maxDistance={9}
+          minDistance={4.5}
+          maxDistance={7}
           onChange={() => {
             setIsUserInteracting(true)
             setLastInteractionTime(Date.now())

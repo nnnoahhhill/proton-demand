@@ -10,38 +10,39 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    
+
     // Extract data from the request
-    const { 
-      items, 
-      customerEmail, 
-      customerName, 
-      shippingAddress, 
-      metadata = {} 
+    const {
+      items,
+      customerEmail,
+      customerName,
+      shippingAddress,
+      specialInstructions,
+      metadata = {}
     } = body;
-    
+
     if (!items || !items.length) {
       return NextResponse.json(
         { error: 'No items provided' },
         { status: 400 }
       );
     }
-    
+
     // Calculate the total amount
     const amount = items.reduce(
       (total: number, item: CartItem) => total + (item.price * item.quantity),
       0
     );
-    
+
     // Add shipping cost ($20/kg)
     const shippingCost = items.reduce(
-      (total: number, item: CartItem) => 
+      (total: number, item: CartItem) =>
         total + (item.weightInKg * item.quantity * 20),
       0
     );
-    
+
     const totalAmount = Math.round((amount + shippingCost) * 100); // Convert to cents
-    
+
     // Create a payment intent
     const paymentIntent = await stripe.paymentIntents.create({
       amount: totalAmount,
@@ -64,10 +65,11 @@ export async function POST(req: NextRequest) {
         customerEmail,
         customerName,
         itemCount: items.length.toString(),
+        specialInstructions: specialInstructions || '',
         ...metadata,
       },
     });
-    
+
     return NextResponse.json({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
@@ -76,10 +78,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error('Error creating payment intent:', error);
-    
+
     return NextResponse.json(
-      { 
-        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+      {
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
       },
       { status: 500 }
     );

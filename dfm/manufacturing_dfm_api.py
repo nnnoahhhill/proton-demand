@@ -62,28 +62,39 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 # Import the DFMAnalyzer for accurate 3D printing analysis
 try:
+    # First, make sure dotenv is loaded
+    try:
+        from dotenv import load_dotenv
+        # Load environment variables from .env file
+        dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
+        if os.path.exists(dotenv_path):
+            load_dotenv(dotenv_path)
+            logger.info("Loaded environment variables from .env file")
+    except ImportError:
+        logger.warning("python-dotenv not installed. Some features may not work correctly.")
+
     # Using importlib to handle module names with dashes
-    spec = importlib.util.find_spec("dfm.3d_print_dfm_analyzer")
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location(
+        "3d_print_dfm_analyzer",
+        os.path.join(current_dir, "3d-print-dfm-analyzer.py")
+    )
+
     if spec is not None:
         dfm_analyzer_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(dfm_analyzer_module)
         DFMAnalyzer = dfm_analyzer_module.DFMAnalyzer
         DEFAULT_CONFIG = dfm_analyzer_module.DEFAULT_CONFIG
         PRINTING_DFM_AVAILABLE = True
+        logger.info("3D printing DFM analyzer loaded successfully")
     else:
-        # Try alternative module name format
-        spec = importlib.util.find_spec("dfm.3d-print-dfm-analyzer")
-        if spec is not None:
-            dfm_analyzer_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(dfm_analyzer_module)
-            DFMAnalyzer = dfm_analyzer_module.DFMAnalyzer
-            DEFAULT_CONFIG = dfm_analyzer_module.DEFAULT_CONFIG
-            PRINTING_DFM_AVAILABLE = True
-        else:
-            logger.warning("3D printing DFM analyzer module not found. Accurate quoting will not be possible.")
-            PRINTING_DFM_AVAILABLE = False
+        logger.warning("3D printing DFM analyzer module not found. Accurate quoting will not be possible.")
+        PRINTING_DFM_AVAILABLE = False
 except ImportError as e:
     logger.warning(f"3D printing DFM analyzer import error: {str(e)}. Accurate quoting will not be possible.")
+    PRINTING_DFM_AVAILABLE = False
+except Exception as e:
+    logger.warning(f"Unexpected error loading 3D printing DFM analyzer: {str(e)}. Accurate quoting will not be possible.")
     PRINTING_DFM_AVAILABLE = False
 
 # Check if CNC modules are available
@@ -91,41 +102,41 @@ try:
     # Try direct imports with sys.path manipulation
     import sys
     import os
-    
+
     # Make sure the dfm directory is in the path
     current_dir = os.path.dirname(os.path.abspath(__file__))
     if current_dir not in sys.path:
         sys.path.insert(0, current_dir)
-    
+
     # Now try normal imports
     logger.info(f"Attempting to import CNC modules from directory: {current_dir}")
-    
+
     # Import the modules with explicit path due to hyphens in filenames
     import importlib.util
-    
+
     # Load cnc-quoting-system.py
-    spec = importlib.util.spec_from_file_location("cnc_quoting_system", 
+    spec = importlib.util.spec_from_file_location("cnc_quoting_system",
                                                 os.path.join(current_dir, "cnc-quoting-system.py"))
     cnc_quoting_system = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cnc_quoting_system)
-    
+
     # Load cnc-feature-extraction.py
-    spec = importlib.util.spec_from_file_location("cnc_feature_extraction", 
+    spec = importlib.util.spec_from_file_location("cnc_feature_extraction",
                                                 os.path.join(current_dir, "cnc-feature-extraction.py"))
     cnc_feature_extraction = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cnc_feature_extraction)
-    
+
     # If imports succeeded, get the classes
     CNCQuoteAnalyzer = cnc_quoting_system.CNCQuoteAnalyzer
     CNCFeatureRecognition = cnc_feature_extraction.CNCFeatureRecognition
     MATERIALS = cnc_quoting_system.MATERIALS
-    
+
     logger.info("CNC modules loaded successfully using direct file imports")
-    
+
     # Mark as available
     CNC_DFM_AVAILABLE = True
     logger.info("CNC modules loaded successfully")
-    
+
 except ImportError as e:
     CNC_DFM_AVAILABLE = False
     logger.warning(f"CNC modules not available: {str(e)}")
@@ -266,10 +277,10 @@ app.add_middleware(
 # Helper function to validate uploaded files
 def validate_model_file(file: UploadFile) -> bool:
     """Validate the uploaded model file
-    
+
     Args:
         file: The uploaded file
-        
+
     Returns:
         bool: True if valid, False otherwise
     """
@@ -278,10 +289,10 @@ def validate_model_file(file: UploadFile) -> bool:
     if ext not in ALLOWED_EXTENSIONS:
         logger.warning(f"Invalid file extension: {ext}")
         return False
-        
+
     # Check file size (TODO: implement proper size checking)
     # This would require reading the file content which we'll do later
-    
+
     return True
 
 @app.get("/")
@@ -320,7 +331,7 @@ async def analyze_model(
 ):
     """
     Analyze a 3D model for manufacturability and generate cost estimate
-    
+
     Args:
         file: STL or STEP file
         manufacturing_method: Manufacturing method to analyze for
@@ -329,35 +340,35 @@ async def analyze_model(
         finish: Surface finish quality
         quantity: Number of parts
         detailed: Return detailed analysis (may take longer)
-        
+
     Returns:
         Basic or detailed analysis response
     """
     # Start timing
     start_time = time.time()
-    
+
     # Validate the file
     if not validate_model_file(file):
         raise HTTPException(status_code=400, detail="Invalid file format. Supported formats: STL, STEP")
-    
+
     # Save file to temporary location
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1])
     temp_file_path = temp_file.name
-    
+
     try:
         # Write uploaded file
         content = await file.read()
         temp_file.write(content)
         temp_file.close()
-        
+
         # Generate a unique analysis ID
         analysis_id = f"DFM-{int(time.time())}-{hash(temp_file_path) % 10000}"
-        
+
         # Determine which analysis method to use
         if manufacturing_method == ManufacturingMethod.AUTO_SELECT:
             # Auto-select based on file attributes
             manufacturing_method = select_manufacturing_method(temp_file_path)
-        
+
         # Load model with trimesh for basic analysis
         try:
             mesh = trimesh.load_mesh(temp_file_path)
@@ -371,23 +382,23 @@ async def analyze_model(
                 }
             else:
                 bbox = {"x": 0, "y": 0, "z": 0}
-                
+
             volume = float(mesh.volume) if hasattr(mesh, 'volume') and mesh.volume is not None else 0
-                
+
         except Exception as e:
             logger.error(f"Error loading mesh: {str(e)}")
             bbox = {"x": 0, "y": 0, "z": 0}
             volume = 0
-        
+
         # Determine which specific analysis to perform
         if manufacturing_method == ManufacturingMethod.THREE_D_PRINTING:
             if not PRINTING_DFM_AVAILABLE:
                 raise HTTPException(status_code=503, detail="3D printing analysis is not available")
-                
+
             # If material is not specified, use a default based on printing technology
             if not material:
                 material = "Resin"  # Default for SLA
-                
+
             # For now, return a placeholder response
             # TODO: Implement actual 3D printing analysis
             basic_response = BasicAnalysisResponse(
@@ -403,7 +414,7 @@ async def analyze_model(
                 message="Basic analysis complete. Detailed analysis will be performed in the background.",
                 bounding_box=bbox
             )
-            
+
             # Start detailed analysis in background if requested
             if detailed:
                 background_tasks[analysis_id] = {
@@ -413,40 +424,40 @@ async def analyze_model(
                     "params": {
                         "manufacturing_method": manufacturing_method,
                         "material": material,
-                        "tolerance": tolerance, 
+                        "tolerance": tolerance,
                         "finish": finish,
                         "quantity": quantity
                     }
                 }
-                
+
                 # Launch background processing
                 asyncio.create_task(process_detailed_analysis(analysis_id))
-            
+
             return basic_response
-            
+
         elif manufacturing_method == ManufacturingMethod.CNC_MACHINING:
             if not CNC_DFM_AVAILABLE:
                 raise HTTPException(status_code=503, detail="CNC machining analysis is not available")
-                
+
             # If material is not specified, use aluminum as default
             if not material:
                 material = "aluminum_6061"
-                
+
             # For now, use the existing CNC analysis system if available
             try:
                 # CNCQuoteAnalyzer should already be available from global imports
                 # If not, this will raise a NameError caught by the outer try/except
-                
+
                 # Create analyzer
                 analyzer = CNCQuoteAnalyzer()
                 analyzer.mesh = mesh
                 analyzer._calculate_basic_stats()
-                
+
                 # Basic estimate
                 basic_price = estimate_cnc_price(volume, material, tolerance, finish, quantity)
                 estimated_time = estimate_cnc_time(volume, material, tolerance, finish)
                 lead_time_days = estimate_lead_time(estimated_time, quantity)
-                
+
                 basic_response = BasicAnalysisResponse(
                     analysis_id=analysis_id,
                     status="basic_complete",
@@ -460,7 +471,7 @@ async def analyze_model(
                     message="Basic CNC analysis complete.",
                     bounding_box=bbox
                 )
-                
+
                 # Start detailed analysis in background if requested
                 if detailed:
                     background_tasks[analysis_id] = {
@@ -470,25 +481,25 @@ async def analyze_model(
                         "params": {
                             "manufacturing_method": manufacturing_method,
                             "material": material,
-                            "tolerance": tolerance, 
+                            "tolerance": tolerance,
                             "finish": finish,
                             "quantity": quantity
                         }
                     }
-                    
+
                     # Launch background processing
                     asyncio.create_task(process_detailed_analysis(analysis_id))
-                
+
                 return basic_response
-                
+
             except Exception as e:
                 logger.error(f"Error in CNC analysis: {str(e)}")
                 raise HTTPException(status_code=500, detail=f"CNC analysis error: {str(e)}")
-        
+
         else:
             # Unsupported manufacturing method
             raise HTTPException(status_code=400, detail=f"Unsupported manufacturing method: {manufacturing_method}")
-            
+
     except Exception as e:
         logger.error(f"Error processing analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
@@ -504,10 +515,10 @@ async def analyze_model(
 async def get_analysis_status(analysis_id: str):
     """
     Get the status of an analysis
-    
+
     Args:
         analysis_id: Analysis ID
-        
+
     Returns:
         Status information
     """
@@ -519,7 +530,7 @@ async def get_analysis_status(analysis_id: str):
             progress=1.0,
             message="Analysis is complete"
         )
-    
+
     # Check if it's in progress
     if analysis_id in background_tasks:
         task = background_tasks[analysis_id]
@@ -529,7 +540,7 @@ async def get_analysis_status(analysis_id: str):
             progress=task["progress"],
             message=task.get("message", "Processing")
         )
-    
+
     # Not found
     raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found")
 
@@ -537,23 +548,23 @@ async def get_analysis_status(analysis_id: str):
 async def get_detailed_analysis(analysis_id: str):
     """
     Get detailed analysis results
-    
+
     Args:
         analysis_id: Analysis ID
-        
+
     Returns:
         Detailed analysis information
     """
     # Check if this analysis is in the cache
     if analysis_id in analysis_cache:
         return analysis_cache[analysis_id]
-    
+
     # Check if it's in progress
     if analysis_id in background_tasks:
         task = background_tasks[analysis_id]
-        raise HTTPException(status_code=202, 
+        raise HTTPException(status_code=202,
                            detail=f"Analysis in progress ({task['progress']:.0%} complete)")
-    
+
     # Not found
     raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found")
 
@@ -566,18 +577,18 @@ async def recommend_technology(
 ):
     """
     Recommend the best manufacturing technology for a model
-    
+
     Args:
         file: STL or STEP file
         max_budget: Maximum budget constraint
         min_resolution: Minimum resolution required (mm)
         max_lead_time: Maximum acceptable lead time (days)
-        
+
     Returns:
         Technology recommendation
     """
     # TODO: Implement technology recommendation logic
-    
+
     # For now return a placeholder
     return TechRecommendationResponse(
         best_method="3d_printing",
@@ -592,10 +603,10 @@ async def recommend_technology(
 async def get_materials(manufacturing_method: ManufacturingMethod):
     """
     Get available materials for a manufacturing method
-    
+
     Args:
         manufacturing_method: Manufacturing method
-        
+
     Returns:
         List of available materials with properties
     """
@@ -653,7 +664,7 @@ async def get_materials(manufacturing_method: ManufacturingMethod):
         try:
             # MATERIALS should already be available from global imports
             # If not, this will raise a NameError caught by the outer try/except
-            
+
             materials = []
             for material_id, material in MATERIALS.items():
                 materials.append({
@@ -664,7 +675,7 @@ async def get_materials(manufacturing_method: ManufacturingMethod):
                     "cost_per_kg": material.cost_per_kg,
                     "machinability": material.machinability
                 })
-                
+
             return {"materials": materials}
         except ImportError:
             # Fallback if CNC module not available
@@ -690,25 +701,25 @@ async def get_materials(manufacturing_method: ManufacturingMethod):
             }
     else:
         # Unsupported manufacturing method
-        raise HTTPException(status_code=400, 
+        raise HTTPException(status_code=400,
                            detail=f"Unsupported manufacturing method: {manufacturing_method}")
 
 # Helper Functions
 def select_manufacturing_method(file_path):
     """
     Auto-select the best manufacturing method for a model
-    
+
     Args:
         file_path: Path to the model file
-        
+
     Returns:
         ManufacturingMethod: Selected manufacturing method
     """
     # TODO: Implement auto-selection logic based on geometry analysis
-    
+
     # For now, choose based on file extension
     ext = os.path.splitext(file_path)[1].lower()
-    
+
     if ext in ['.stl', '.STL']:
         # STL files are commonly used for 3D printing
         return ManufacturingMethod.THREE_D_PRINTING
@@ -722,17 +733,17 @@ def select_manufacturing_method(file_path):
 def estimate_3d_printing_price(volume_mm3, material):
     """
     Generate a quick estimate for 3D printing cost
-    
+
     Args:
         volume_mm3: Model volume in mm³
         material: Material type
-        
+
     Returns:
         float: Estimated price
     """
     # Convert to cm³
     volume_cm3 = volume_mm3 / 1000.0
-    
+
     # Base rates per cm³ for different materials
     material_rates = {
         "Resin": 0.30,      # Standard resin
@@ -742,39 +753,39 @@ def estimate_3d_printing_price(volume_mm3, material):
         "PETG": 0.20,       # PETG
         "Nylon": 0.40       # Nylon (SLS)
     }
-    
+
     # Get base rate, default to resin if material not found
     base_rate = material_rates.get(material, 0.30)
-    
+
     # Calculate material cost
     material_cost = volume_cm3 * base_rate
-    
+
     # Add setup cost
     setup_cost = 15.0
-    
+
     # Add handling fee
     handling_fee = 5.0
-    
+
     # Total cost
     total_cost = material_cost + setup_cost + handling_fee
-    
+
     # Minimum cost
     return max(total_cost, 25.0)
 
 def estimate_3d_printing_time(volume_mm3, material):
     """
     Estimate 3D printing time in minutes
-    
+
     Args:
         volume_mm3: Model volume in mm³
         material: Material type
-        
+
     Returns:
         float: Estimated print time in minutes
     """
     # Convert to cm³
     volume_cm3 = volume_mm3 / 1000.0
-    
+
     # Base print speed factors (cm³ per hour)
     material_speed = {
         "Resin": 15.0,     # SLA resin
@@ -784,41 +795,41 @@ def estimate_3d_printing_time(volume_mm3, material):
         "PETG": 19.0,      # PETG
         "Nylon": 10.0      # Nylon (SLS)
     }
-    
+
     # Get speed factor, default to resin if material not found
     speed = material_speed.get(material, 15.0)
-    
+
     # Calculate print time in hours
     print_time_hours = volume_cm3 / speed
-    
+
     # Convert to minutes
     print_time_minutes = print_time_hours * 60.0
-    
+
     # Add setup time
     setup_time = 30.0
-    
+
     # Total time
     total_time = print_time_minutes + setup_time
-    
+
     return total_time
 
 def estimate_cnc_price(volume_mm3, material, tolerance, finish, quantity):
     """
     Generate a quick estimate for CNC machining cost
-    
+
     Args:
         volume_mm3: Model volume in mm³
         material: Material type
         tolerance: Tolerance class
         finish: Surface finish
         quantity: Quantity
-        
+
     Returns:
         float: Estimated price
     """
     # Convert to cm³
     volume_cm3 = volume_mm3 / 1000.0
-    
+
     # Base rates per cm³ for different materials
     material_rates = {
         "aluminum_6061": 2.5,
@@ -830,32 +841,32 @@ def estimate_cnc_price(volume_mm3, material, tolerance, finish, quantity):
         "plastic_delrin": 2.0,
         "plastic_hdpe": 1.5
     }
-    
+
     # Get base rate, default to aluminum if material not found
     base_rate = material_rates.get(material, 2.5)
-    
+
     # Apply tolerance and finish multipliers
     tolerance_multipliers = {
         "standard": 1.0,
         "precision": 1.3,
         "ultra_precision": 1.8
     }
-    
+
     finish_multipliers = {
         "standard": 1.0,
         "fine": 1.2,
         "mirror": 1.5
     }
-    
+
     tolerance_factor = tolerance_multipliers.get(str(tolerance), 1.0)
     finish_factor = finish_multipliers.get(str(finish), 1.0)
-    
+
     # Calculate base price
     base_price = volume_cm3 * base_rate * tolerance_factor * finish_factor
-    
+
     # Add setup cost
     setup_cost = 50.0
-    
+
     # Apply quantity discount
     if quantity <= 1:
         quantity_factor = 1.0
@@ -865,29 +876,29 @@ def estimate_cnc_price(volume_mm3, material, tolerance, finish, quantity):
         quantity_factor = 0.85
     else:
         quantity_factor = 0.8
-        
+
     # Calculate final price
     price_per_unit = base_price * quantity_factor
     total_price = (price_per_unit * quantity) + setup_cost
-    
+
     return total_price
 
 def estimate_cnc_time(volume_mm3, material, tolerance, finish):
     """
     Estimate CNC machining time in minutes
-    
+
     Args:
         volume_mm3: Model volume in mm³
         material: Material type
         tolerance: Tolerance class
         finish: Surface finish
-        
+
     Returns:
         float: Estimated machining time in minutes
     """
     # Convert to cm³
     volume_cm3 = volume_mm3 / 1000.0
-    
+
     # Base time factors (minutes per cm³)
     material_time_factors = {
         "aluminum_6061": 5.0,
@@ -899,55 +910,55 @@ def estimate_cnc_time(volume_mm3, material, tolerance, finish):
         "plastic_delrin": 3.0,
         "plastic_hdpe": 2.0
     }
-    
+
     # Get base time factor, default to aluminum if not found
     base_factor = material_time_factors.get(material, 5.0)
-    
+
     # Apply modifiers for tolerance and finish
     tolerance_time_factors = {
         "standard": 1.0,
         "precision": 1.5,
         "ultra_precision": 2.5
     }
-    
+
     finish_time_factors = {
         "standard": 1.0,
         "fine": 1.3,
         "mirror": 2.0
     }
-    
+
     tolerance_factor = tolerance_time_factors.get(str(tolerance), 1.0)
     finish_factor = finish_time_factors.get(str(finish), 1.0)
-    
+
     # Estimate machining time
     base_time = volume_cm3 * base_factor
     adjusted_time = base_time * tolerance_factor * finish_factor
-    
+
     # Add setup time
     setup_time = 30.0  # 30 minutes
-    
+
     # Total time
     total_time = adjusted_time + setup_time
-    
+
     return total_time
 
 def estimate_lead_time(processing_time_minutes, quantity):
     """
     Estimate lead time in business days
-    
+
     Args:
         processing_time_minutes: Processing time in minutes
         quantity: Quantity
-        
+
     Returns:
         int: Estimated lead time in business days
     """
     # Convert to hours
     processing_hours = processing_time_minutes / 60.0
-    
+
     # Calculate total hours for all parts
     total_hours = processing_hours * quantity
-    
+
     # Basic lead time calculation
     if total_hours < 2:
         return 2  # 2 days for small parts
@@ -962,14 +973,14 @@ def estimate_lead_time(processing_time_minutes, quantity):
 async def process_detailed_analysis(analysis_id):
     """
     Process detailed analysis in the background
-    
+
     Args:
         analysis_id: The analysis ID to process
     """
     task_info = background_tasks.get(analysis_id)
     if not task_info:
         return
-        
+
     try:
         # Extract parameters
         file_path = task_info["file_path"]
@@ -978,22 +989,22 @@ async def process_detailed_analysis(analysis_id):
         tolerance = task_info["params"]["tolerance"]
         finish = task_info["params"]["finish"]
         quantity = task_info["params"]["quantity"]
-        
+
         # Update status
         task_info["status"] = "processing"
         task_info["progress"] = 0.2
         task_info["message"] = "Loading and analyzing model..."
-        
+
         # Process based on manufacturing method
         if manufacturing_method == ManufacturingMethod.THREE_D_PRINTING:
             # TODO: Implement 3D printing detailed analysis
             # For now, return a placeholder
-            
+
             # Update status
             task_info["status"] = "complete"
             task_info["progress"] = 1.0
             task_info["message"] = "Analysis complete"
-            
+
             # Add result to cache (placeholder for now)
             analysis_cache[analysis_id] = {
                 "analysis_id": analysis_id,
@@ -1024,7 +1035,7 @@ async def process_detailed_analysis(analysis_id):
                 "bounding_box": {"x": 0, "y": 0, "z": 0},
                 "analysis_time_seconds": 0.0
             }
-        
+
         elif manufacturing_method == ManufacturingMethod.CNC_MACHINING:
             # Process the CNC analysis if available
             if CNC_DFM_AVAILABLE:
@@ -1036,12 +1047,12 @@ async def process_detailed_analysis(analysis_id):
                         file_path, material, tolerance, finish, quantity
                     )
                 )
-                
+
                 # Update status
                 task_info["status"] = "complete"
                 task_info["progress"] = 1.0
                 task_info["message"] = "Analysis complete"
-                
+
                 # Add to cache
                 result["analysis_id"] = analysis_id
                 result["status"] = "complete"
@@ -1050,13 +1061,13 @@ async def process_detailed_analysis(analysis_id):
                 task_info["status"] = "error"
                 task_info["progress"] = 0.0
                 task_info["message"] = "CNC analysis not available"
-        
+
         else:
             # Unsupported method
             task_info["status"] = "error"
             task_info["progress"] = 0.0
             task_info["message"] = f"Unsupported manufacturing method: {manufacturing_method}"
-            
+
     except Exception as e:
         logger.error(f"Error in background processing for {analysis_id}: {str(e)}")
         task_info["status"] = "error"
@@ -1073,37 +1084,37 @@ async def process_detailed_analysis(analysis_id):
 def process_cnc_analysis(file_path, material, tolerance, finish, quantity):
     """
     Process CNC analysis (runs in a separate thread)
-    
+
     Args:
         file_path: Path to the model file
         material: Material identifier
         tolerance: Tolerance class
         finish: Surface finish
         quantity: Quantity
-        
+
     Returns:
         dict: Analysis results
     """
     try:
         # CNCQuoteAnalyzer should already be available from global imports
         # If not, this will raise a NameError caught by the try/except
-        
+
         # Create analyzer
         analyzer = CNCQuoteAnalyzer()
-        
+
         # Load model
         analyzer.load_model(file_path)
-        
+
         # Generate detailed quote
         quote = analyzer.generate_quote(material, tolerance, finish)
-        
+
         # Adjust for quantity if necessary
         if quantity > 1:
             # This should be handled in the CNC quoting system
             pass
-            
+
         return quote
-        
+
     except Exception as e:
         logger.error(f"Error in CNC analysis: {str(e)}")
         return {
@@ -1129,28 +1140,28 @@ async def get_quote(
 ):
     """
     Get a manufacturing quote with DFM analysis in a single call
-    
+
     This endpoint performs Design for Manufacturing analysis and returns a quote
     if the part can be manufactured. If DFM issues are found, they will be returned
     in the response.
-    
+
     Args:
         model_file: 3D model file (.stl, .step, or .stp)
         process: Manufacturing process (CNC, 3DP_SLA, 3DP_SLS, 3DP_FDM, SHEET_METAL)
         material: Material to use, specific to the selected process
         finish: Surface finish quality, specific to the selected process
         drawing_file: Optional engineering drawing (.pdf)
-        
+
     Returns:
         Quote with pricing, lead time and manufacturing details if DFM passes,
         or DFM issues if the part cannot be manufactured.
     """
     # Start timing
     start_time = time.time()
-    
+
     # Generate a unique quote ID
     quote_id = f"QUOTE-{int(time.time())}-{abs(hash(model_file.filename) % 10000)}"
-    
+
     # Map process to ManufacturingMethod enum
     manufacturing_method_map = {
         "CNC": ManufacturingMethod.CNC_MACHINING,
@@ -1159,7 +1170,7 @@ async def get_quote(
         "3DP_FDM": ManufacturingMethod.THREE_D_PRINTING,
         "SHEET_METAL": ManufacturingMethod.SHEET_METAL
     }
-    
+
     # Map to PrintingTechnology for 3D printing processes
     printing_technology = None
     if process.startswith("3DP_"):
@@ -1169,7 +1180,7 @@ async def get_quote(
             "3DP_FDM": PrintingTechnology.FDM
         }
         printing_technology = process_tech_map.get(process)
-    
+
     try:
         # Validate the process
         if process not in manufacturing_method_map:
@@ -1178,9 +1189,9 @@ async def get_quote(
                 quote_id=quote_id,
                 error=f"Invalid process. Must be one of: {', '.join(manufacturing_method_map.keys())}"
             )
-        
+
         manufacturing_method = manufacturing_method_map[process]
-        
+
         # Validate the model file
         if not validate_model_file(model_file):
             return QuoteResponse(
@@ -1188,7 +1199,7 @@ async def get_quote(
                 quote_id=quote_id,
                 error="Invalid model file format. Supported formats: STL, STEP"
             )
-        
+
         # Validate drawing file if provided
         if drawing_file and not drawing_file.filename.lower().endswith('.pdf'):
             return QuoteResponse(
@@ -1196,11 +1207,11 @@ async def get_quote(
                 quote_id=quote_id,
                 error="Invalid drawing file format. Only PDF is supported."
             )
-        
+
         # Save model file to temporary location
         model_temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(model_file.filename)[1])
         model_file_path = model_temp_file.name
-        
+
         # Save drawing file if provided
         drawing_file_path = None
         if drawing_file:
@@ -1209,12 +1220,12 @@ async def get_quote(
             drawing_content = await drawing_file.read()
             drawing_temp_file.write(drawing_content)
             drawing_temp_file.close()
-        
+
         # Write uploaded model file
         model_content = await model_file.read()
         model_temp_file.write(model_content)
         model_temp_file.close()
-        
+
         # Calculate manufacturing details and perform DFM analysis
         if manufacturing_method == ManufacturingMethod.THREE_D_PRINTING:
             if not PRINTING_DFM_AVAILABLE:
@@ -1223,32 +1234,27 @@ async def get_quote(
                     quote_id=quote_id,
                     error="3D printing analysis is not available. Please ensure DFMAnalyzer is properly installed."
                 )
-            
+
             # Perform 3D printing DFM analysis using the enhanced function
             printing_analysis_result = analyze_3d_printing(
-                model_file_path, 
-                material, 
-                printing_technology, 
+                model_file_path,
+                material,
+                printing_technology,
                 finish
             )
-            
-            # Check if part is manufacturable
-            if not printing_analysis_result["is_manufacturable"]:
-                return QuoteResponse(
-                    success=False,
-                    quote_id=quote_id,
-                    message="Part cannot be manufactured due to DFM issues",
-                    dfm_issues=[
-                        DFMIssue(
-                            type=issue["type"],
-                            severity=issue["severity"],
-                            description=issue["description"],
-                            location=issue.get("location")
-                        )
-                        for issue in printing_analysis_result["issues"]
-                    ]
+
+            # Check if part has DFM issues but still provide a quote
+            has_dfm_issues = not printing_analysis_result["is_manufacturable"]
+            dfm_issues = [
+                DFMIssue(
+                    type=issue["type"],
+                    severity=issue["severity"],
+                    description=issue["description"],
+                    location=issue.get("location")
                 )
-            
+                for issue in printing_analysis_result["issues"]
+            ] if "issues" in printing_analysis_result else []
+
             # Get detailed manufacturing info from analysis
             bbox = {}
             if "bounding_box" in printing_analysis_result:
@@ -1275,15 +1281,15 @@ async def get_quote(
                 except Exception as e:
                     logger.error(f"Error loading mesh: {str(e)}")
                     bbox = {"x": 0, "y": 0, "z": 0}
-            
+
             # Get volume and surface area
             volume = printing_analysis_result.get("volume_mm3", 0)
             surface_area = printing_analysis_result.get("surface_area_mm2", 0)
-            
+
             # Get price and lead time
             price = printing_analysis_result["basic_price"]
-            lead_time_days = printing_analysis_result["lead_time_days"]
-            
+            lead_time_days = 10  # Fixed lead time of 10 days
+
             # Return detailed quote with all the available information
             return QuoteResponse(
                 success=True,
@@ -1291,6 +1297,7 @@ async def get_quote(
                 price=price,
                 currency="USD",
                 lead_time_days=lead_time_days,
+                dfm_issues=dfm_issues,  # Include any DFM issues
                 manufacturing_details=ManufacturingDetails(
                     process=process,
                     material=material,
@@ -1305,7 +1312,7 @@ async def get_quote(
                     supportRequirements=printing_analysis_result.get("support_volume_estimate", "N/A")
                 )
             )
-        
+
         # Continue with other manufacturing methods unchanged
         elif manufacturing_method == ManufacturingMethod.CNC_MACHINING:
             # Existing CNC implementation code remains unchanged
@@ -1315,14 +1322,14 @@ async def get_quote(
                     quote_id=quote_id,
                     error="CNC machining analysis is not available"
                 )
-            
+
             # Perform CNC machining DFM analysis
             try:
                 # Use CNCQuoteAnalyzer
                 analyzer = CNCQuoteAnalyzer()
                 analyzer.load_model(model_file_path)
                 analysis_result = analyzer.analyze_model(material=material, finish=finish)
-                
+
                 # Check if part is manufacturable
                 if not analysis_result["is_manufacturable"]:
                     return QuoteResponse(
@@ -1339,11 +1346,11 @@ async def get_quote(
                             for issue in analysis_result["issues"]
                         ]
                     )
-                
+
                 # Calculate price and lead time
                 price = analysis_result["costs"]["total"] if "costs" in analysis_result else analysis_result.get("basic_price", 0)
                 lead_time_days = analysis_result.get("lead_time_days", 7)
-                
+
                 # Load mesh for basic dimensions if not provided by analyzer
                 try:
                     mesh = trimesh.load_mesh(model_file_path)
@@ -1364,7 +1371,7 @@ async def get_quote(
                     bbox = {"x": 0, "y": 0, "z": 0}
                     volume = 0
                     surface_area = 0
-                
+
                 # Return successful quote
                 return QuoteResponse(
                     success=True,
@@ -1381,7 +1388,7 @@ async def get_quote(
                         surfaceArea=surface_area
                     )
                 )
-            
+
             except Exception as e:
                 logger.error(f"Error in CNC analysis: {str(e)}")
                 return QuoteResponse(
@@ -1389,7 +1396,7 @@ async def get_quote(
                     quote_id=quote_id,
                     error=f"Error in CNC analysis: {str(e)}"
                 )
-                
+
         elif manufacturing_method == ManufacturingMethod.SHEET_METAL:
             # TODO: Implement sheet metal analysis when available
             return QuoteResponse(
@@ -1397,14 +1404,14 @@ async def get_quote(
                 quote_id=quote_id,
                 error="Sheet metal analysis is not fully implemented yet"
             )
-        
+
         else:
             return QuoteResponse(
                 success=False,
                 quote_id=quote_id,
                 error=f"Unsupported manufacturing method: {process}"
             )
-            
+
     except Exception as e:
         logger.error(f"Error processing quote request: {str(e)}")
         return QuoteResponse(
@@ -1416,7 +1423,7 @@ async def get_quote(
         # Calculate execution time
         execution_time = time.time() - start_time
         logger.info(f"getQuote request processed in {execution_time:.2f} seconds")
-        
+
         # Clean up temporary files
         try:
             if 'model_file_path' in locals() and os.path.exists(model_file_path):
@@ -1430,19 +1437,19 @@ async def get_quote(
 def analyze_3d_printing(model_path, material, technology, finish):
     """
     Perform 3D printing DFM analysis using the specialized DFMAnalyzer
-    
+
     Args:
         model_path: Path to the model file
         material: Material to use
         technology: PrintingTechnology enum value
         finish: Surface finish quality
-        
+
     Returns:
         Dictionary with analysis results
     """
     if not PRINTING_DFM_AVAILABLE:
         raise RuntimeError("3D printing DFM analyzer not available. Cannot perform accurate analysis.")
-    
+
     try:
         # Map technology to printer type for DFMAnalyzer
         printer_type_map = {
@@ -1451,7 +1458,7 @@ def analyze_3d_printing(model_path, material, technology, finish):
             PrintingTechnology.FDM: "FDM"
         }
         printer_type = printer_type_map.get(technology, "SLA")
-        
+
         # Map material to appropriate type
         material_type_map = {
             "resin_standard": "Resin",
@@ -1463,34 +1470,34 @@ def analyze_3d_printing(model_path, material, technology, finish):
             "tpu": "Flexible"
         }
         material_type = material_type_map.get(material, "Resin")
-        
+
         # Map finish to layer height
         layer_height_map = {
             "standard": 0.1,  # Standard quality
             "fine": 0.05      # Fine quality
         }
         layer_height = layer_height_map.get(finish.lower(), 0.1)
-        
+
         # Configure DFMAnalyzer
         config = DEFAULT_CONFIG.copy()
         config["printer_type"] = printer_type
         config["material_type"] = material_type
         config["layer_height"] = layer_height
         config["use_external_slicer"] = True
-        
+
         # Create analyzer and run analysis
         analyzer = DFMAnalyzer(config)
         analyzer.load_model(model_path)
         stats, issues = analyzer.analyze_model()
-        
+
         # Generate detailed report
         report = analyzer.generate_report()
-        
+
         # Check if part is manufacturable based on printability score
         is_manufacturable = True
         critical_issues = []
         warnings = []
-        
+
         for issue in issues:
             if issue["severity"] == "critical":
                 is_manufacturable = False
@@ -1505,26 +1512,26 @@ def analyze_3d_printing(model_path, material, technology, finish):
                     "severity": "warning",
                     "description": issue["details"]
                 })
-        
+
         # Extract results from report
         final_price = stats["total_cost"]
         lead_time_days = 3  # Default
-        
+
         # Estimate lead time based on print time
         if "estimated_print_time" in stats and stats["estimated_print_time"] != "N/A":
             # Parse print time string (format like "9h 1m")
             print_time_str = stats["estimated_print_time"]
             hours = 0
             minutes = 0
-            
+
             if "h" in print_time_str:
                 hours_part = print_time_str.split("h")[0].strip()
                 hours = int(hours_part) if hours_part.isdigit() else 0
-            
+
             if "m" in print_time_str:
                 minutes_part = print_time_str.split("m")[0].split("h")[-1].strip()
                 minutes = int(minutes_part) if minutes_part.isdigit() else 0
-            
+
             # Calculate lead time in days based on print time
             print_time_hours = hours + (minutes / 60)
             if print_time_hours < 12:
@@ -1535,7 +1542,7 @@ def analyze_3d_printing(model_path, material, technology, finish):
                 lead_time_days = 4
             else:
                 lead_time_days = 7
-        
+
         # Return analysis results
         return {
             "is_manufacturable": is_manufacturable,
@@ -1574,11 +1581,11 @@ if __name__ == "__main__":
     import uvicorn
     import os
     import sys
-    
+
     # Add parent directory to path to make imports work correctly when run as script
     parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if parent_dir not in sys.path:
         sys.path.insert(0, parent_dir)
-    
+
     # Run with the correct module path
     uvicorn.run("dfm.manufacturing_dfm_api:app", host="0.0.0.0", port=8000, reload=True)

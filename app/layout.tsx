@@ -6,6 +6,7 @@ import { Navigation } from "@/components/navigation"
 import { Footer } from "@/components/footer"
 import { AnimatedBackground } from "@/components/animated-background"
 import { CartProvider } from "@/lib/cart"
+import { LoadingProvider } from "@/lib/loading-context"
 
 const andaleMono = Andale_Mono({
   weight: "400",
@@ -29,12 +30,14 @@ export default function RootLayout({
       <body className={`${andaleMono.className} dark bg-[#0A1525] text-white antialiased`}>
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
           <CartProvider>
-            <AnimatedBackground />
-            <div className="flex min-h-screen flex-col relative z-10">
-              <Navigation />
-              <main className="flex-1">{children}</main>
-              <Footer />
-            </div>
+            <LoadingProvider>
+              <AnimatedBackground />
+              <div className="flex min-h-screen flex-col relative z-10">
+                <Navigation />
+                <main className="flex-1">{children}</main>
+                <Footer />
+              </div>
+            </LoadingProvider>
           </CartProvider>
         </ThemeProvider>
       </body>

@@ -73,10 +73,23 @@ const config = {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        "spin-slow": {
+          "0%": { transform: "rotate(0deg)" },
+          "70%": { transform: "rotate(720deg)" },
+          "100%": { transform: "rotate(720deg)" },
+        },
+        "pulse-subtle": {
+          "0%": { transform: "scale(1)" },
+          "80%": { transform: "scale(0.95)" },
+          "90%": { transform: "scale(1.1)" },
+          "100%": { transform: "scale(1)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        "spin-slow": "spin-slow 2.5s cubic-bezier(0.25, 0.1, 0.25, 1) forwards",
+        "pulse-subtle": "pulse-subtle 1s cubic-bezier(0.4, 0, 0.2, 1) forwards",
       },
     },
   },
