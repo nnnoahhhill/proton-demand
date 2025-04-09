@@ -165,47 +165,47 @@ This project is licensed under the MIT License. Please add a LICENSE file contai
 **Updated Directory Structure:**
 
 manufacturing_quote_system/
-├── requirements.txt                     ✅
-├── main_api.py                          ✅
-├── main_cli.py                          ✅
-├── .env.example                         ✅
-├── config.py                            ✅
+├── requirements.txt                     
+├── main_api.py                          
+├── main_cli.py                          
+├── .env.example                         
+├── config.py                            
 ├── core/
 │   ├── init.py
-│   ├── common_types.py                ✅
-│   ├── geometry.py                    ✅
-│   ├── exceptions.py                  ✅
-│   └── utils.py                       ✅
+│   ├── common_types.py                
+│   ├── geometry.py                    
+│   ├── exceptions.py                  
+│   └── utils.py                       
 ├── processes/
 │   ├── init.py
-│   ├── base_processor.py              ✅
+│   ├── base_processor.py              
 │   ├── print_3d/
 │   │   ├── init.py
-│   │   ├── processor.py               ✅
-│   │   ├── dfm_rules.py               ✅
-│   │   ├── slicer.py                  ✅
-│   │   └── materials.json             ✅
+│   │   ├── processor.py               
+│   │   ├── dfm_rules.py               
+│   │   ├── slicer.py                  
+│   │   └── materials.json             
 │   ├── cnc/
 │   │   ├── init.py
-│   │   ├── processor.py               ✅
-│   │   ├── dfm_rules.py               ✅
-│   │   └── materials.json             ✅
-│   └── sheet_metal/                   # (Structure exists, files are placeholders)
+│   │   ├── processor.py               
+│   │   ├── dfm_rules.py               
+│   │   └── materials.json             
+│   └── sheet_metal/                   
 │       ├── init.py
 │       ├── processor.py
 │       ├── dfm_rules.py
 │       └── materials.json
 ├── visualization/
 │   ├── init.py
-│   └── viewer.py                      ✅
+│   └── viewer.py                      
 ├── testing/
 │   ├── init.py
-│   ├── conftest.py                    ✅
-│   ├── test_3d_print_dfm.py           ✅
-│   ├── test_3d_print_quote.py         ✅
-│   ├── test_cnc.py                    ✅
-│   ├── benchmark_models/              # Populated by script
+│   ├── conftest.py                    
+│   ├── test_3d_print_dfm.py           
+│   ├── test_3d_print_quote.py         
+│   ├── test_cnc.py                    
+│   ├── benchmark_models/              
 │   │   ├── ...
-│   └── generate_test_models.py        ✅
-├── setup_instructions.md                ✅
-└── README.md                            ✅  # Updated with detailed info
+│   └── generate_test_models.py        
+├── setup_instructions.md                
+└── README.md                            
