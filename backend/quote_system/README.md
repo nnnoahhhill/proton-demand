@@ -1,3 +1,5 @@
+# Backend Quote System README
+
 ## 1. Project Goal & Vision
 
 The primary goal of this project is to create a **fast, accurate, and reliable** backend system for generating instant quotes for custom parts manufactured via:
@@ -126,28 +128,128 @@ The system uses a modular architecture:
 
 ## 8. Setup
 
-See [setup_instructions.md](./setup_instructions.md) for detailed setup steps.
+**Prerequisites:**
+*   Python 3.9+ installed.
+*   `conda` package manager recommended (especially for installing `pythonocc-core`). See [Miniconda Installation](https://docs.conda.io/projects/miniconda/en/latest/).
+*   (Optional but needed for 3D Print quoting) **PrusaSlicer** (or compatible fork like SuperSlicer) installed and accessible from the command line.
+    *   Verify by running `prusa-slicer --help` (or the equivalent for your slicer) in your terminal.
+    *   If not automatically found, set the `PRUSA_SLICER_PATH` environment variable in your `.env` file to the full path of the slicer executable.
+
+**Steps:**
+
+1.  **Clone the repository** (if not already done).
+2.  **Navigate to the `backend/quote_system` directory:**
+    ```bash
+    cd path/to/your/project/backend/quote_system
+    ```
+3.  **(Recommended) Create and activate a Conda environment:**
+    ```bash
+    conda create -n quote_env python=3.10 -y
+    conda activate quote_env
+    ```
+    (Replace `quote_env` with your preferred name and `3.10` with your desired Python 3.9+ version).
+4.  **Install dependencies:**
+    *   **Using Conda (Recommended):** This handles `pythonocc-core` most reliably.
+        ```bash
+        # Install pythonocc-core first from conda-forge
+        conda install -c conda-forge pythonocc-core=7.7.0 -y
+
+        # Install remaining dependencies using pip within the conda environment
+        # This includes fastapi, typer, pydantic-settings, trimesh, pymeshlab,
+        # manifold3d (for trimesh booleans), pyvista, etc.
+        pip install -r requirements.txt
+        ```
+    *   **Using Pip only (May fail for `pythonocc-core` or `manifold3d` dependencies):**
+        ```bash
+        pip install -r requirements.txt
+        ```
+        If `pythonocc-core` fails, try the Conda method. If `manifold3d` installation causes issues, ensure you have necessary build tools installed or check its specific platform requirements.
+5.  **Create a `.env` file:**
+    *   Copy the example: `cp .env.example .env`
+    *   Edit the `.env` file if needed:
+        *   Set `PRUSA_SLICER_PATH=/path/to/your/prusa-slicer-console` if the slicer is not in your system's PATH.
+        *   Add API keys (e.g., `GEMINI_API_KEY=...`) if you plan to use LLM features (currently not implemented).
 
 ## 9. Basic Usage
 
-### API Example (`curl`)
+**Important:** Ensure your Conda environment (e.g., `quote_env`) is activated before running commands:
+```bash
+conda activate quote_env
+```
+
+### Running the API Server
+
+Use `uvicorn` to run the FastAPI server:
 
 ```bash
-curl -X POST "http://localhost:8000/quote" \
+# From the backend/quote_system directory
+uvicorn main_api:app --reload
+```
+
+*   `--reload`: Automatically restarts the server when code changes (useful for development).
+*   The API will typically be available at `http://127.0.0.1:8000`.
+*   Access interactive API documentation (Swagger UI) at `http://127.0.0.1:8000/docs`.
+*   Access alternative API documentation (ReDoc) at `http://127.0.0.1:8000/redoc`.
+
+**API Example (`curl`):**
+
+```bash
+curl -X POST "http://127.0.0.1:8000/quote" \
      -H "accept: application/json" \
      -H "Content-Type: multipart/form-data" \
-     -F "model_file=@/path/to/your/model.stl" \
+     -F "model_file=@/path/to/your/benchmark_models/pass_cube_10mm.stl" \
      -F "process=3D Printing" \
-     -F "material_id=fdm_pla_standard"
-CLI Example
-Bash
+     -F "material_id=sla-resin-standard-clear"
+```
+(Replace `material_id` and file path as needed)
 
-# List CNC materials
+### Running the CLI Tool
+
+Use `python main_cli.py` followed by the desired command:
+
+```bash
+# From the backend/quote_system directory
+
+# List available materials for 3D Printing
+python main_cli.py list-materials "3D Printing"
+
+# List available materials for CNC Machining
 python main_cli.py list-materials "CNC Machining"
 
-# Get 3DP quote & visualize
-python main_cli.py quote /path/to/model.stl "3D Printing" sla_resin_standard --visualize
-10. License
+# Get a quote for a 3D Print model (using an SLA material)
+python main_cli.py quote ./testing/benchmark_models/pass_cube_10mm.stl "3D Printing" "sla-resin-standard-clear"
+
+# Get a quote for a CNC model (using Aluminum) and save JSON output
+python main_cli.py quote ./testing/benchmark_models/pass_cube_10mm.stl "CNC Machining" "cnc-aluminum-6061" -o quote_output.json
+
+# Get a quote and visualize DFM issues (requires PyVista and a GUI)
+python main_cli.py quote ./testing/benchmark_models/fail_non_manifold_edge.stl "3D Printing" "sla-resin-standard-clear" --visualize
+```
+
+### Running Tests
+
+Ensure `pytest` is installed (`pip install pytest`).
+
+1.  **Generate Benchmark Models:** Before running tests that use the models, generate them:
+    ```bash
+    # From the backend/quote_system directory
+    python testing/generate_test_models.py
+    ```
+    This will create/update the `.stl` files in `backend/quote_system/testing/benchmark_models/`.
+
+2.  **Run Tests:**
+    ```bash
+    # From the backend/quote_system directory
+    pytest
+    ```
+    Or run specific test files:
+    ```bash
+    pytest testing/test_3d_print_dfm.py
+    pytest testing/test_3d_print_quote.py
+    ```
+    *Note:* Some quote tests might be skipped if a required material ID isn't found or if the PrusaSlicer executable cannot be located.
+
+## 10. License
 This project is licensed under the MIT License. Please add a LICENSE file containing the MIT License text to the project root.
 
 

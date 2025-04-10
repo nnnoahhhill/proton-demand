@@ -1,36 +1,33 @@
 # processes/__init__.py
 
 # This file makes the 'processes' directory a Python package.
-# You can optionally add imports here to expose parts of the submodules directly,
-# e.g., from .print_3d.processor import Print3DProcessor
+# Keep it simple - imports are handled by the modules that need them.
 
-# Or define a factory function to get the correct processor based on type.
+# No code needed here for basic package structure.
 
-from typing import Type, Optional, Dict
-import logging
-
-from ..core.common_types import ProcessType, AnalysisConfig
-from .base_processor import BaseProcessor
-from .print_3d.processor import Print3DProcessor
-# Import other processors as they are added
-# from .cnc_milling.processor import CNCMillingProcessor
-# from .sheet_metal.processor import SheetMetalProcessor
-
-logger = logging.getLogger(__name__)
-
-# Map ProcessType enum to the corresponding processor class
-PROCESSOR_MAP: Dict[ProcessType, Type[BaseProcessor]] = {
-    ProcessType.PRINT_3D: Print3DProcessor,
-    # ProcessType.CNC_MILLING: CNCMillingProcessor,
-    # ProcessType.SHEET_METAL: SheetMetalProcessor,
-}
-
-def get_processor(process_type: ProcessType, config: Optional[AnalysisConfig] = None) -> BaseProcessor:
-    """Factory function to instantiate the correct processor based on ProcessType."""
-    processor_class = PROCESSOR_MAP.get(process_type)
-    if not processor_class:
-        logger.error(f"No processor implementation found for process type: {process_type}")
-        raise NotImplementedError(f"No processor implementation found for process type: {process_type}")
-
-    logger.info(f"Instantiating processor for {process_type.name}")
-    return processor_class(config) 
+# If a factory function is desired later, it should be corrected like this:
+# from typing import Type, Dict
+# import logging
+# from core.common_types import ManufacturingProcess # Absolute import
+# from .base_processor import BaseProcessor
+# from .print_3d.processor import Print3DProcessor
+# try:
+#     from .cnc.processor import CncProcessor
+#     cnc_available = True
+# except ImportError:
+#     CncProcessor = None # Define as None if import fails
+#     cnc_available = False
+#
+# logger = logging.getLogger(__name__)
+#
+# PROCESSOR_MAP: Dict[ManufacturingProcess, Type[BaseProcessor]] = {
+#     ManufacturingProcess.PRINT_3D: Print3DProcessor,
+#     **( {ManufacturingProcess.CNC: CncProcessor} if cnc_available and CncProcessor else {} )
+# }
+#
+# def get_processor_factory(process_type: ManufacturingProcess, markup: float) -> BaseProcessor:
+#     """Factory function to instantiate the correct processor."""
+#     processor_class = PROCESSOR_MAP.get(process_type)
+#     if not processor_class:
+#         raise NotImplementedError(f"No processor for {process_type}")
+#     return processor_class(markup=markup) # Pass markup

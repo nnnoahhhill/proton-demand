@@ -6,16 +6,20 @@ typer[all]         # For the CLI interface
 # Geometry & Mesh Processing
 numpy
 trimesh              # Core mesh loading, basic analysis, simple repairs
+shapely              # Optional dependency for trimesh intersections (e.g., slice_mesh_plane)
 pymeshlab            # Advanced mesh analysis & DFM checks (wraps MeshLab)
-pythonocc-core       # For reading STEP files
+manifold3d           # Boolean operations backend for Trimesh
+pytz
 
 # Visualization (for local CLI testing)
 pyvista              # 3D visualization
 PyQt6                # Backend for PyVista GUI (or choose PySide6)
+pyside6
 
 # Configuration & Utilities
-pydantic             # Data validation and settings management
-python-dotenv        # For loading .env files (API keys, config)
+pydantic             # Base data validation
+pydantic-settings    # Settings management (loads .env)
+python-dotenv        # For loading .env files (needed by pydantic-settings)
 requests             # For potential LLM API calls
 
 # Optional LLM Client

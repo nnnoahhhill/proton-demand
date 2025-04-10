@@ -1,201 +1,154 @@
-# ProtonDemand Analysis Engine Setup Instructions
+# Setup Instructions: Manufacturing Quote System
 
-This document provides detailed setup instructions for the ProtonDemand Analysis Engine, including dependencies, environment configuration, and troubleshooting steps.
+This guide explains how to set up the development environment and install dependencies for the Manufacturing Quote System.
 
-## System Requirements
+**Current Date:** Tuesday, April 8, 2025
 
-- **Python**: 3.8 or higher (3.9+ recommended)
-- **Operating System**: Linux, macOS, or Windows
-- **Additional Software**:
-  - PrusaSlicer (for 3D print analysis)
-  - Git (for version control)
-  - Python development tools (headers and compiler for native extensions)
+## 1. Prerequisites
 
-## External Dependencies
+* **Git:** To clone the repository. ([https://git-scm.com/](https://git-scm.com/))
+* **Python:** Version 3.9 or higher recommended. ([https://www.python.org/](https://www.python.org/))
+    * Ensure Python and `pip` (Python package installer) are added to your system's PATH during installation.
+* **C++ Compiler:** Required by some dependencies (`pymeshlab`, potentially `pythonocc-core` if installed via pip).
+    * **Linux:** Usually available via `build-essential` (Debian/Ubuntu) or `base-devel` (Arch/Manjaro/EndeavourOS).
+    * **macOS:** Install Xcode Command Line Tools: `xcode-select --install`
+    * **Windows:** Install Microsoft C++ Build Tools ([https://visualstudio.microsoft.com/visual-cpp-build-tools/](https://visualstudio.microsoft.com/visual-cpp-build-tools/)).
+* **PrusaSlicer:** (Required for accurate 3D Print quoting) Download and install the latest version for your OS from [https://www.prusa3d.com/prusaslicer/](https://www.prusa3d.com/prusaslicer/). The application needs to be able to find the `prusa-slicer` (or `prusa-slicer-console`) executable.
 
-### Required Software
-
-1. **PrusaSlicer**: Required for slicing simulation and print time/material estimates.
-   - [Download PrusaSlicer](https://www.prusa3d.com/prusaslicer/)
-   - Install according to your operating system's instructions
-   - Note the full path to the executable for environment configuration
-
-2. **PyMeshLab Dependencies**: The PyMeshLab package has system dependencies.
-   - **Ubuntu/Debian**:
-     ```bash
-     sudo apt-get update
-     sudo apt-get install -y libglu1-mesa-dev libxi-dev libxmu-dev libglu1-mesa
-     ```
-   - **macOS**:
-     ```bash
-     brew install mesa
-     ```
-   - **Windows**: The required libraries are typically bundled with the Python package.
-
-### Python Dependencies
-
-All Python dependencies are listed in `requirements.txt` and will be installed in the setup steps.
-
-## Installation Steps
-
-1. **Clone the Repository** (if not already done):
-   ```bash
-   git clone <repository-url>
-   cd backend/quote_system
-   ```
-
-2. **Create and Activate a Virtual Environment**:
-   ```bash
-   # Using venv (recommended)
-   python -m venv venv
-   
-   # On Linux/macOS
-   source venv/bin/activate
-   
-   # On Windows
-   venv\Scripts\activate
-   ```
-
-3. **Install Python Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   
-   If you encounter issues with PyMeshLab or other packages with native extensions:
-   ```bash
-   # Install wheel first to help with binary packages
-   pip install wheel
-   
-   # Try to install requirements again
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Configuration**:
-   - Copy the example environment file:
-     ```bash
-     cp .env.example .env
-     ```
-   - Edit the `.env` file with your specific configuration:
-     - Set `PRUSA_SLICER_PATH` to the full path of your PrusaSlicer executable
-     - Adjust other settings as needed
-
-5. **Verify Installation**:
-   ```bash
-   # Activate your virtual environment if not already active
-   source venv/bin/activate  # Or venv\Scripts\activate on Windows
-   
-   # Run a basic test
-   python -c "import trimesh; import pymeshlab; print('Libraries loaded successfully')"
-   ```
-
-## Running the System
-
-### API Server
-
-To run the FastAPI server for analysis endpoints:
+## 2. Clone the Repository
 
 ```bash
-# Activate your virtual environment if not already active
-source venv/bin/activate  # Or venv\Scripts\activate on Windows
-
-# Run the server in development mode (with auto-reload)
-uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
-
-# For production (no auto-reload)
-uvicorn api.main:app --host 0.0.0.0 --port 8000
+git clone <your-repository-url>
+cd manufacturing_quote_system
 ```
+## 3. Set Up a Virtual Environment (Highly Recommended)
+Using a virtual environment prevents conflicts between project dependencies.
 
-Access the API documentation at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-### Command Line Interface
-
-For command-line usage (if implemented):
+### Using `venv` (standard Python):
 
 ```bash
-# Activate your virtual environment
-source venv/bin/activate  # Or venv\Scripts\activate on Windows
+# Create the environment (replace .venv with your preferred name)
+python -m venv .venv
 
-# Run the CLI with a file to analyze
-python main_cli.py analyze --file path/to/model.stl --process print_3d --technology FDM --material PLA-Generic
+# Activate the environment:
+# Linux / macOS (bash/zsh)
+source .venv/bin/activate
+# Windows (Command Prompt)
+# .venv\Scripts\activate.bat
+# Windows (PowerShell)
+# .venv\Scripts\Activate.ps1
 ```
 
-## Testing
-
-Run the tests to ensure everything is working correctly:
+### Using `conda` (Recommended if installing pythonocc-core):
 
 ```bash
-# Activate your virtual environment
-source venv/bin/activate  # Or venv\Scripts\activate on Windows
+# Create the environment with Python and pip
+conda create --name quote-env python=3.12 pip -y
 
-# Run all tests
-pytest
-
-# Run specific test file
-pytest testing/test_3d_print_dfm.py
-
-# Generate test coverage report
-pytest --cov=. --cov-report=html
+# Activate the environment
+conda activate quote-env
 ```
+## 4. Install Dependencies
+### 4.1. pythonocc-core (STEP File Support)
+This is often the most challenging dependency.
 
-Test models are located in `testing/benchmark_models/`. You can generate additional test models with:
+**Method A: Using Conda (Recommended)**
+If you are using a Conda environment, this is the easiest way:
 
 ```bash
-python testing/generate_test_models.py
+conda install -c conda-forge pythonocc-core -y
 ```
 
-## Troubleshooting
+**Method B: Using Pip (May Require Manual Setup)**
+If using `pip` (with `venv` or globally), installation might fail if the underlying OpenCASCADE Technology (OCCT) libraries are not found.
 
-### Common Issues
+```bash
+pip install pythonocc-core
+```
+If the `pip install` fails, you might need to install OCCT development libraries first:
 
-1. **PrusaSlicer Not Found**:
-   - Ensure PrusaSlicer is installed
-   - Verify the path in your `.env` file is correct
-   - Test the slicer directly:
-     ```bash
-     # Replace with your actual path
-     /path/to/prusa-slicer --help
-     ```
+*   **Debian/Ubuntu:** `sudo apt-get update && sudo apt-get install -y libocct*-dev` (package names might vary slightly)
+*   **Arch / EndeavourOS:** `sudo pacman -Syu occt`
+*   **macOS:** `brew install occt`
+*   **Windows:** This is difficult with pip. Conda is strongly recommended. If you must use pip, you might need to manually download OCCT libraries and configure environment variables, which is beyond this basic setup guide.
 
-2. **PyMeshLab Installation Failures**:
-   - Ensure you have the required system dependencies installed (see External Dependencies)
-   - Try installing PyMeshLab separately:
-     ```bash
-     pip install pymeshlab
-     ```
-   - Check if there are prebuilt wheels for your system on PyPI
+### 4.2. Install Remaining Python Packages
+Once `pythonocc-core` is handled (or if using Conda which installed it), install the rest from `requirements.txt`:
 
-3. **Import Errors**:
-   - Verify your virtual environment is activated
-   - Check if all dependencies are installed:
-     ```bash
-     pip list
-     ```
-   - Try reinstalling the problematic package
+```bash
+pip install -r requirements.txt
+```
+This will install FastAPI, Typer, Trimesh, PyMeshLab, PyVista, PyQt6, etc.
 
-4. **Permission Issues**:
-   - Ensure you have write permissions to the directories
-   - For temporary file access errors, check your system's temporary directory permissions
+## 5. Configure PrusaSlicer Path (If Needed)
+The application will try to automatically find your PrusaSlicer installation. If it fails, or you want to specify a particular version/location:
 
-### Logging
+1.  Find the path to your `prusa-slicer` or `prusa-slicer-console` executable.
+    *   **Linux:** Often `/usr/bin/prusa-slicer` or `/home/user/Applications/.../prusa-slicer` (if AppImage).
+    *   **macOS:** Typically `/Applications/PrusaSlicer.app/Contents/MacOS/PrusaSlicer`.
+    *   **Windows:** Look in `C:\Program Files\Prusa3D\PrusaSlicer\` or `C:\Program Files\PrusaSlicer\`. Use the `prusa-slicer-console.exe` path. Remember to handle spaces if necessary (e.g., using quotes in the `.env` file).
+2.  Set the `PRUSA_SLICER_PATH` environment variable or add/modify it in your `.env` file (see next step).
 
-The application uses Python's logging system. To increase logging for troubleshooting:
+## 6. Configure Application Settings (`.env`)
+Copy the example environment file:
+```bash
+cp .env.example .env
+```
+Edit the `.env` file using a text editor:
+*   Set `MARKUP_FACTOR` to your desired markup (e.g., 1.7 for 70% markup).
+*   **Optional:** Set `PRUSA_SLICER_PATH=/path/to/your/prusa-slicer-executable` if auto-detection doesn't work.
+*   **Optional:** Add your `GEMINI_API_KEY` or `OPENAI_API_KEY` if you plan to use the (optional) LLM features.
+*   **Optional:** Change `LOG_LEVEL` (e.g., to `DEBUG` for more detailed logs).
 
-1. Set the `LOG_LEVEL` environment variable in your `.env` file:
-   ```
-   LOG_LEVEL=DEBUG
-   ```
+## 7. Running the Application
+Make sure your virtual environment is activated!
 
-2. Check logs for detailed error information when problems occur
+### 7.1. Running the API Server
+```bash
+uvicorn main_api:app --reload --host 0.0.0.0 --port 8000
+```
+*   `--reload`: Automatically restarts the server when code changes (for development).
+*   `--host 0.0.0.0`: Makes the server accessible from other devices on your network.
+*   `--port 8000`: Specifies the port number.
 
-## Additional Resources
+Access the API docs (Swagger UI) at `http://localhost:8000/docs`.
 
-- [PrusaSlicer Documentation](https://help.prusa3d.com/en/article/prusaslicer-2-x_2197)
-- [PyMeshLab Documentation](https://pymeshlab.readthedocs.io/)
-- [Trimesh Documentation](https://trimsh.org/index.html)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+### 7.2. Running the CLI Tool
+Use the `python main_cli.py` command followed by subcommands and arguments.
 
-## Support
+```bash
+# Show help message
+python main_cli.py --help
 
-If you encounter issues not covered in this guide, please contact the development team or file an issue in the project repository. 
+# List available materials for 3D Printing
+python main_cli.py list-materials "3D Printing"
+
+# List available materials for CNC
+python main_cli.py list-materials "CNC Machining"
+
+# Get a quote for an STL file using 3D Printing (SLA)
+python main_cli.py quote path/to/your/model.stl "3D Printing" sla_resin_standard
+
+# Get a quote for a STEP file using CNC (Aluminum) and save output
+python main_cli.py quote path/to/your/part.step "CNC Machining" aluminum_6061 --output output/quote.json
+
+# Get a quote for FDM PLA with visualization and custom markup
+python main_cli.py quote path/to/another.stl "3D Printing" fdm_pla_standard --markup 1.8 --visualize
+```
+
+## 8. OS-Specific Notes Summary
+*   **Arch / EndeavourOS:**
+    *   Use `sudo pacman -Syu python python-pip git base-devel occt` for prerequisites.
+    *   Consider using `conda` for easier `pythonocc-core` installation.
+*   **macOS:**
+    *   Use `brew install python git occt` for prerequisites.
+    *   Install Xcode Command Line Tools (`xcode-select --install`).
+    *   Consider using `conda` for `pythonocc-core`.
+*   **Windows:**
+    *   Install Python from python.org (ensure Add to PATH is checked).
+    *   Install Git from git-scm.com.
+    *   Install Microsoft C++ Build Tools.
+    *   **Strongly recommend** using Conda for managing the environment, especially `pythonocc-core`.
+    *   Be mindful of file paths and potential issues with spaces or backslashes when setting `PRUSA_SLICER_PATH`.
+
+You are now ready to run the DFM analysis and quoting system! 

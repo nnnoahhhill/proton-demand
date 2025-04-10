@@ -1,19 +1,25 @@
 # processes/print_3d/slicer.py
 
 import subprocess
-import tempfile
+import platform
 import os
-import sys
+import logging
+import tempfile
 import shutil
 import re
-import logging
 import time # Added time
 from typing import Optional, Dict, Any, Tuple, List # Added List
 from dataclasses import dataclass
 
-# Assuming core modules are siblings in the package structure
-from ...core.exceptions import SlicerError, ConfigurationError
-from ...core.common_types import Print3DTechnology
+import trimesh
+
+# from quote_system.core.exceptions import SlicerExecutionError, FileFormatError
+from core.exceptions import SlicerExecutionError, FileFormatError, ConfigurationError, SlicerError
+# from quote_system.core.common_types import Print3DTechnology, MaterialInfo # Added MaterialInfo
+from core.common_types import Print3DTechnology, MaterialInfo # Added MaterialInfo
+# from quote_system.config import settings # Access global config
+from config import settings # Access global config
+from core import utils
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +83,7 @@ def find_slicer_executable(slicer_name: str = "prusa-slicer") -> Optional[str]:
     possible_paths = []
     home_dir = os.path.expanduser("~")
 
-    if sys.platform == "win32":
+    if platform.system() == "Windows":
         # Windows paths
         program_files = os.environ.get("ProgramFiles", "C:\\Program Files")
         program_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
@@ -89,7 +95,7 @@ def find_slicer_executable(slicer_name: str = "prusa-slicer") -> Optional[str]:
             # Add user-specific AppData paths if needed
              os.path.join(home_dir, "AppData", "Local", "Programs", "PrusaSlicer", f"{slicer_name}.exe")
         ])
-    elif sys.platform == "darwin":
+    elif platform.system() == "Darwin":
         # macOS paths
         possible_paths.extend([
             f"/Applications/PrusaSlicer.app/Contents/MacOS/{slicer_name}",

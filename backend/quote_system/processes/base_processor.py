@@ -5,28 +5,30 @@ import time
 import json
 import os
 import logging
+import math
 from typing import List, Dict, Optional, Any
 
 import trimesh
 
-# Assuming core modules are siblings in the package structure
-from ..core.common_types import (
+# Fix imports to use fully qualified paths
+# IMPORTANT: Using absolute imports here to avoid namespace issues with testing
+from quote_system.core.common_types import (
     ManufacturingProcess,
     MaterialInfo,
     MeshProperties,
     DFMReport,
     CostEstimate,
     QuoteResult,
-    DFMStatus,     # Added DFMStatus
-    DFMIssue,      # Added DFMIssue
-    DFMIssueType,  # Added DFMIssueType
-    DFMLevel       # Added DFMLevel
+    DFMStatus,     
+    DFMIssue,     
+    DFMIssueType, 
+    DFMLevel       
 )
-from ..core.exceptions import (
-    MaterialNotFoundError, ConfigurationError, FileNotFoundError, # Added FileNotFoundError
-    FileFormatError, GeometryProcessingError # Added these
+from quote_system.core.exceptions import (
+    MaterialNotFoundError, ConfigurationError,
+    FileFormatError, GeometryProcessingError
 )
-from ..core import geometry, utils # Import necessary core modules
+from quote_system.core import geometry, utils # Import necessary core modules
 
 logger = logging.getLogger(__name__)
 
@@ -183,27 +185,43 @@ class BaseProcessor(abc.ABC):
         estimated_process_time_str = "N/A"
 
         try:
-            # 1. Get Material Info
-            material_info = self.get_material_info(material_id) # Raises MaterialNotFoundError
-
-            # 2. Load Geometry
-            # Note: geometry.load_mesh handles STEP->STL conversion internally
+            # Start by loading the mesh
+            logger.info(f"Loading mesh from {file_path}")
             mesh = geometry.load_mesh(file_path) # Raises FileNotFoundError, FileFormatError, GeometryProcessingError, StepConversionError
+            
+            # Get the mesh properties using our geometric analysis functions
+            mesh_properties = geometry.get_mesh_properties(mesh)
+            logger.info(f"Mesh properties: {mesh_properties}")
 
-            # 3. Get Basic Mesh Properties
-            mesh_properties = geometry.get_mesh_properties(mesh) # Raises GeometryProcessingError
+            # Load material configuration
+            material_info = self.get_material_info(material_id)
+            logger.info(f"Using material: {material_info.name}")
 
-            # 4. Run DFM Checks
-            dfm_report = self.run_dfm_checks(mesh, mesh_properties, material_info) # Specific implementation in subclasses
-
-            # 5. Calculate Cost & Time (only if DFM did not critically fail)
-            if dfm_report.status != DFMStatus.FAIL:
-                cost_estimate = self.calculate_cost_and_time(mesh, mesh_properties, material_info) # Specific implementation
-                # Apply markup for customer price (based *only* on material cost)
-                customer_price = round(cost_estimate.base_cost * self.markup, 2)
-                estimated_process_time_str = utils.format_time(cost_estimate.process_time_seconds)
+            # Perform basic Design For Manufacturing checks
+            dfm_report = self.run_dfm_checks(mesh, mesh_properties, material_info)
+            
+            if dfm_report.status != DFMStatus.PASS:
+                logger.info(f"DFM check failed with status {dfm_report.status} and {len(dfm_report.issues)} issues.")
+                error_message = "Design failed manufacturability checks. See DFM report for details."
+                cost_estimate = None
+                customer_price = None
+                estimated_process_time_str = None
             else:
-                 logger.warning(f"DFM check failed for {os.path.basename(file_path)}. Skipping cost estimation.")
+                # If DFM checks pass, generate pricing
+                logger.info("DFM check passed, generating cost estimate")
+                cost_estimate = self.calculate_cost_and_time(mesh, mesh_properties, material_info)
+                
+                # Apply markup for final customer pricing - Fix rounding issue
+                # Ensure we don't round down below the minimum expected markup
+                raw_price = cost_estimate.base_cost * self.markup
+                customer_price = math.ceil(raw_price * 100) / 100  # Round up to nearest cent
+                
+                # Format processing time for display
+                estimated_process_time_str = utils.format_time(cost_estimate.process_time_seconds)
+                
+                error_message = None
+                
+                logger.info(f"Estimated cost: ${cost_estimate.base_cost:.2f}, Customer price: ${customer_price:.2f}")
 
 
         except (MaterialNotFoundError, FileNotFoundError, FileFormatError, GeometryProcessingError, ConfigurationError) as e:
@@ -265,7 +283,8 @@ class BaseProcessor(abc.ABC):
                   material_info = MaterialInfo(id="unknown", name="Unknown", process=self.process_type, density_g_cm3=0)
 
 
-        return QuoteResult(
+        # Create QuoteResult object without converting to dictionaries
+        result = QuoteResult(
             file_name=os.path.basename(file_path),
             process=self.process_type,
             technology=material_info.technology, # Get technology from the loaded material info
@@ -276,4 +295,6 @@ class BaseProcessor(abc.ABC):
             estimated_process_time_str=estimated_process_time_str if cost_estimate else None,
             processing_time_sec=total_processing_time,
             error_message=error_message
-        ) 
+        )
+        # Return the QuoteResult instance
+        return result 

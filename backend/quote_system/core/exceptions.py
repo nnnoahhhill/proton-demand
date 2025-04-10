@@ -36,4 +36,8 @@ class QuoteGenerationError(ManufacturingQuoteError):
     """Generic exception for failures during the overall quote generation pipeline."""
     pass
 
+class SlicerExecutionError(ManufacturingQuoteError):
+    """Error occurred during slicer execution (e.g., process failed, timeout)."""
+    pass
+
 # Add more specific exceptions as needed, e.g., CncFeatureRecognitionError etc. 

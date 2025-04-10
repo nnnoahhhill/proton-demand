@@ -77,12 +77,16 @@ class DFMIssue(BaseModel):
     # Optional: Data for visualization (e.g., list of vertex indices, face indices, or a specific value)
     visualization_hint: Optional[Any] = Field(None, description="Data hint for visualizing the issue area.")
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional quantitative details (e.g., measured thickness).")
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True}
 
 class DFMReport(BaseModel):
     """Consolidated report of all DFM checks for a model."""
     status: DFMStatus = Field(..., description="Overall pass/warning/fail status.")
     issues: List[DFMIssue] = Field(default_factory=list, description="List of identified DFM issues.")
     analysis_time_sec: float = Field(..., description="Time taken for DFM analysis in seconds.")
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True}
 
 # --- Costing and Quoting Models ---
 
@@ -95,6 +99,8 @@ class MaterialInfo(BaseModel):
     cost_per_kg: Optional[float] = Field(None, description="Cost of the material per kilogram (specify currency elsewhere).")
     cost_per_liter: Optional[float] = Field(None, description="Cost of the material per liter (for resins).")
     density_g_cm3: float = Field(..., description="Density in grams per cubic centimeter.")
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True}
 
 class CostEstimate(BaseModel):
     """Detailed breakdown of the estimated costs (excluding markup)."""
@@ -109,6 +115,8 @@ class CostEstimate(BaseModel):
     # Base cost is *only* material cost
     base_cost: float = Field(..., description="Base cost for manufacturing (Material Cost only).")
     cost_analysis_time_sec: float = Field(..., description="Time taken for cost analysis in seconds.")
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True}
 
 class QuoteResult(BaseModel):
     """Final quote result including DFM, cost, and time estimates."""
@@ -123,6 +131,13 @@ class QuoteResult(BaseModel):
     estimated_process_time_str: Optional[str] = Field(None, description="Human-readable estimated process time (e.g., '2h 30m').")
     processing_time_sec: float = Field(..., description="Total time taken for the entire quote generation in seconds.")
     error_message: Optional[str] = Field(None, description="Error message if the quote generation failed unexpectedly.")
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True}
+    
+    @property
+    def base_cost(self) -> Optional[float]:
+        """Convenience property to access cost_estimate.base_cost directly. Returns None if cost_estimate is None."""
+        return self.cost_estimate.base_cost if self.cost_estimate else None
 
 # --- Geometry Related Models ---
 
@@ -137,6 +152,8 @@ class BoundingBox(BaseModel):
     size_x: float
     size_y: float
     size_z: float
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True}
 
 class MeshProperties(BaseModel):
     """Basic properties extracted from the mesh."""
@@ -146,4 +163,6 @@ class MeshProperties(BaseModel):
     volume_cm3: float
     surface_area_cm2: float
     is_watertight: bool # Indicates if Trimesh considers it watertight (manifold)
-    units: Optional[str] = Field("mm", description="Units inferred or assumed from the file (usually mm for STL/STEP).") 
+    units: Optional[str] = Field("mm", description="Units inferred or assumed from the file (usually mm for STL/STEP).")
+    
+    model_config = {"arbitrary_types_allowed": True, "from_attributes": True} 

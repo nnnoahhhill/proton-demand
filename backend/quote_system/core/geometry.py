@@ -24,8 +24,8 @@ except ImportError:
         "Install with 'conda install -c conda-forge pythonocc-core' or 'pip install pythonocc-core'."
     )
 
-from .common_types import BoundingBox, MeshProperties
-from .exceptions import GeometryProcessingError, FileFormatError, StepConversionError
+from core.common_types import MeshProperties, BoundingBox
+from core.exceptions import FileFormatError, GeometryProcessingError, StepConversionError
 
 logger = logging.getLogger(__name__)
 
