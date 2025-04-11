@@ -4,10 +4,16 @@ import os
 import time
 import logging
 import tempfile
+import json # For Slack payload
+import requests # For Slack notification
 from typing import Dict, List, Any, Optional
 
+import stripe # Import Stripe
+from pydantic import BaseModel # For request bodies
+
 from fastapi import (
-    FastAPI, File, UploadFile, Form, HTTPException, Depends, BackgroundTasks, Query
+    FastAPI, File, UploadFile, Form, HTTPException, Depends, BackgroundTasks, Query,
+    Request, Header # Added for webhook
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -19,10 +25,12 @@ from core.common_types import (
     ManufacturingProcess,
     MaterialInfo,
     DFMReport,
-    DFMIssue
+    DFMIssue,
+    OrderItem # Assuming you might want a type for items
 )
 from core.exceptions import (
-    MaterialNotFoundError, FileFormatError, GeometryProcessingError, ConfigurationError
+    MaterialNotFoundError, FileFormatError, GeometryProcessingError, ConfigurationError,
+    SlicerError, ManufacturingQuoteError # Added missing specific errors
 )
 # Import Processors (using dynamic import based on process type)
 from quote_system.processes.print_3d.processor import Print3DProcessor
@@ -60,8 +68,8 @@ except Exception as e:
 # --- FastAPI App Initialization ---
 app = FastAPI(
     title="Manufacturing Instant Quote API",
-    description="Provides DFM analysis and instant quotes for 3D Printing and CNC Machining.",
-    version="1.0.0",
+    description="Provides DFM analysis and instant quotes for 3D Printing and CNC Machining. Includes Payment Intent flow.",
+    version="1.1.0",
     # Add lifespan context manager if needed for startup/shutdown events
 )
 
@@ -74,6 +82,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- Stripe Initialization ---
+# Load Stripe key from settings
+if settings.stripe_secret_key:
+    stripe.api_key = settings.stripe_secret_key
+    logger.info("Stripe API key loaded.")
+else:
+    logger.warning("Stripe API key not found. Payment processing will be disabled.")
 
 # --- Helper Functions ---
 def get_processor(process: ManufacturingProcess):
@@ -109,6 +125,47 @@ def cleanup_temp_file(file_path: str):
     except Exception as e:
         logger.warning(f"Failed to clean up temporary file '{file_path}': {e}")
 
+def send_slack_notification(payload: Dict[str, Any]):
+    """Sends a notification to the configured Slack webhook URL."""
+    if not settings.slack_webhook_url:
+        logger.warning("Slack Webhook URL not configured. Skipping notification.")
+        return
+
+    try:
+        response = requests.post(
+            settings.slack_webhook_url,
+            headers={'Content-Type': 'application/json'},
+            data=json.dumps(payload)
+        )
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+        logger.info(f"Slack notification sent successfully. Status: {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during Slack notification: {e}", exc_info=True)
+
+
+# --- Pydantic Models for API ---
+class CheckoutRequest(BaseModel):
+    item_name: str
+    price: float # Expect price in major currency unit (e.g., dollars)
+    currency: str = 'usd'
+    quantity: int = 1
+    quote_id: Optional[str] = None # Optional: Pass quote ID for reference
+
+class SimpleOrderItem(BaseModel):
+    id: str
+    name: str # e.g., file name or quote ID part
+    quantity: int
+    price: float # Price per item in major currency unit (e.g., dollars)
+
+class PaymentIntentRequest(BaseModel):
+    items: List[SimpleOrderItem]
+    currency: str = 'usd'
+    customer_email: Optional[str] = None # Optional: Collect email if needed
+    # Add other fields you collect in your form, e.g., shipping, name
+    metadata: Optional[Dict[str, str]] = None # To pass custom data
+
 
 # --- API Endpoints ---
 
@@ -118,7 +175,7 @@ async def get_root():
     available_processes = [p.value for p in PROCESSORS.keys()]
     return {
         "service": "Manufacturing Instant Quote API",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status": "operational",
         "available_processes": available_processes
     }
@@ -227,6 +284,157 @@ async def create_quote(
 #    #   Call LLM service with issue details
 #    #   Return enhanced explanation
 #    raise HTTPException(status_code=501, detail="Not Implemented Yet")
+
+@app.post("/create-payment-intent", tags=["Payments"])
+async def create_payment_intent(payment_request: PaymentIntentRequest):
+    """Creates a Stripe Payment Intent based on cart items."""
+    if not stripe.api_key:
+        raise HTTPException(status_code=503, detail="Payment processing is not configured.")
+
+    try:
+        # Calculate total amount from items
+        # IMPORTANT: Ensure price calculation is secure and validated server-side
+        # Never trust amounts sent directly from the client for the final charge.
+        # Here we assume the prices in payment_request.items are trustworthy (e.g., fetched from quote results)
+        total_amount_major_unit = sum(item.price * item.quantity for item in payment_request.items)
+        if total_amount_major_unit <= 0:
+             raise HTTPException(status_code=400, detail="Invalid order amount.")
+
+        # Convert to smallest currency unit (e.g., cents)
+        amount_in_cents = int(total_amount_major_unit * 100)
+
+        # Prepare metadata
+        metadata = payment_request.metadata or {}
+        metadata['item_count'] = str(len(payment_request.items))
+        metadata['first_item_id'] = payment_request.items[0].id if payment_request.items else 'N/A'
+        # Add other relevant info to metadata if needed for webhook/dashboard
+
+        # Create Payment Intent
+        intent_params = {
+            'amount': amount_in_cents,
+            'currency': payment_request.currency.lower(),
+            'automatic_payment_methods': {'enabled': True},
+            'metadata': metadata,
+        }
+        if payment_request.customer_email:
+            # Optional: Find/Create Stripe Customer for better tracking
+            customers = stripe.Customer.list(email=payment_request.customer_email, limit=1)
+            if customers.data:
+                customer_id = customers.data[0].id
+            else:
+                customer = stripe.Customer.create(email=payment_request.customer_email)
+                customer_id = customer.id
+            intent_params['customer'] = customer_id
+            # Can also add description, shipping info here if needed
+
+        payment_intent = stripe.PaymentIntent.create(**intent_params)
+
+        logger.info(f"Created Payment Intent: {payment_intent.id} for amount {total_amount_major_unit:.2f} {payment_request.currency}")
+        # Return the client secret to the frontend
+        return {
+            "clientSecret": payment_intent.client_secret,
+            "paymentIntentId": payment_intent.id,
+            "amount": total_amount_major_unit,
+            "currency": payment_request.currency
+            }
+
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating payment intent: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Payment provider error: {e}")
+    except HTTPException as e: # Re-raise HTTP exceptions
+        raise e
+    except Exception as e:
+        logger.exception("Unexpected error creating payment intent:")
+        raise HTTPException(status_code=500, detail="Internal server error creating payment session.")
+
+
+@app.post("/stripe-webhook", tags=["Payments"])
+async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Header(None)):
+    """Handles incoming webhooks from Stripe (now for Payment Intents)."""
+    if not stripe.api_key or not settings.stripe_webhook_secret or not stripe_signature:
+        logger.error("Webhook received with missing config/signature.")
+        raise HTTPException(status_code=400, detail="Webhook configuration or signature missing.")
+
+    payload = await request.body()
+    event = None
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, stripe_signature, settings.stripe_webhook_secret
+        )
+        logger.info(f"Stripe webhook event received: {event['type']}")
+    except ValueError as e:
+        logger.error(f"Invalid webhook payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid webhook signature: {e}")
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    except Exception as e:
+        logger.error(f"Error constructing webhook event: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Webhook processing error")
+
+    # --- Handle the payment_intent.succeeded event --- 
+    if event['type'] == 'payment_intent.succeeded':
+        payment_intent = event['data']['object']
+        logger.info(f"PaymentIntent succeeded: {payment_intent.id}")
+
+        # Extract details from PaymentIntent
+        amount_received = payment_intent.get('amount_received', 0) / 100.0
+        currency = payment_intent.get('currency', 'usd').upper()
+        payment_intent_id = payment_intent.id
+        # --- Extracting customer email/name is slightly different ---
+        customer_email = 'N/A'
+        customer_id = payment_intent.get('customer')
+        if customer_id:
+            try:
+                customer = stripe.Customer.retrieve(customer_id)
+                customer_email = customer.email or 'N/A'
+            except stripe.error.StripeError as e:
+                logger.warning(f"Could not retrieve customer {customer_id}: {e}")
+        # --- Get metadata passed during creation ---
+        metadata = payment_intent.get('metadata', {})
+        quote_id = metadata.get('quote_id', 'N/A') # Example if you pass it
+        item_description = metadata.get('description', 'Order Items') # Example
+        # --- You might need to adjust metadata passing in /create-payment-intent ---
+
+        # Prepare Slack message
+        slack_message_payload = {
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": ":receipt: Payment Successful!", "emoji": True}
+                },
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*Customer:* {customer_email}"},
+                        {"type": "mrkdwn", "text": f"*Amount:* {amount_received:.2f} {currency}"},
+                        {"type": "mrkdwn", "text": f"*Description:* {item_description}"},
+                        # {"type": "mrkdwn", "text": f"*Quote ID:* {quote_id}"}, # Include if passed via metadata
+                        {"type": "mrkdwn", "text": f"*Payment Intent:* `{payment_intent_id}`"},
+                    ]
+                },
+                 {
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": f"Received at: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}"}]
+                }
+            ]
+        }
+
+        send_slack_notification(slack_message_payload)
+
+        # TODO: Update order status in your database using payment_intent_id
+
+    # Handle other events if needed (e.g., payment_intent.payment_failed)
+    elif event['type'] == 'payment_intent.payment_failed':
+        payment_intent = event['data']['object']
+        logger.warning(f"PaymentIntent failed: {payment_intent.id}. Reason: {payment_intent.get('last_payment_error', {}).get('message')}")
+        # Optionally send a different Slack message or log
+
+    else:
+        logger.info(f"Unhandled event type: {event['type']}")
+
+    return JSONResponse(content={"received": True})
 
 # --- Run Instruction (for direct execution, though usually run with uvicorn command) ---
 if __name__ == "__main__":

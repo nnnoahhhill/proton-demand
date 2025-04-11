@@ -21,11 +21,29 @@ pydantic             # Base data validation
 pydantic-settings    # Settings management (loads .env)
 python-dotenv        # For loading .env files (needed by pydantic-settings)
 requests             # For potential LLM API calls
+stripe
 
 # Optional LLM Client
-google-generativeai  # For Gemini API calls
-openai               # For OpenAI API calls
+# google-generativeai  # For Gemini API calls
+# openai               # For OpenAI API calls
 # anthropic          # For Anthropic/Claude API calls (Add if needed)
 
 # Testing
-pytest 
+pytest
+pytest-asyncio
+scipy
+stl
+
+# Newly added from the code block
+pymeshlab
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-multipart
+requests
+stripe
+
+# Optional LLM providers
+# google-generativeai
+# openai
+# anthropic 

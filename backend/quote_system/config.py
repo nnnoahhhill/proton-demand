@@ -19,19 +19,29 @@ class Settings(BaseSettings):
     )
 
     # Pricing Configuration
-    markup_factor: float = Field(default=1.5, description="Multiplier for base cost to get customer price (>= 1.0)")
+    markup_factor: float = Field(1.5, env="MARKUP_FACTOR", description="Multiplier for base cost to get customer price (>= 1.0)")
 
     # External Tool Paths
     # If None, the slicer module will attempt auto-detection.
-    slicer_path_override: Optional[str] = Field(default=None, alias='PRUSA_SLICER_PATH', description="Optional override path for PrusaSlicer executable.")
+    slicer_path: Optional[str] = Field(None, env="SLICER_PATH", description="Optional override path for PrusaSlicer executable.")
 
     # LLM API Keys (Optional)
-    gemini_api_key: Optional[str] = Field(default=None, alias='GEMINI_API_KEY')
-    openai_api_key: Optional[str] = Field(default=None, alias='OPENAI_API_KEY')
-    anthropic_api_key: Optional[str] = Field(default=None, alias='ANTHROPIC_API_KEY')
+    gemini_api_key: Optional[str] = Field(None, alias='GEMINI_API_KEY')
+    openai_api_key: Optional[str] = Field(None, alias='OPENAI_API_KEY')
+    anthropic_api_key: Optional[str] = Field(None, alias='ANTHROPIC_API_KEY')
 
     # Logging Configuration
-    log_level: str = Field(default='INFO', alias='LOG_LEVEL', description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
+    log_level: str = Field("INFO", env="LOG_LEVEL", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
+
+    # Stripe Configuration
+    stripe_secret_key: Optional[str] = Field(None, env="STRIPE_SECRET_KEY")
+    stripe_webhook_secret: Optional[str] = Field(None, env="STRIPE_WEBHOOK_SECRET")
+
+    # Slack Configuration
+    slack_webhook_url: Optional[str] = Field(None, env="SLACK_WEBHOOK_URL")
+
+    # Frontend URL (for redirects)
+    frontend_url: str = Field("http://localhost:3000", env="FRONTEND_URL")
 
     # Validators
     @validator('markup_factor')
@@ -54,8 +64,8 @@ try:
     # Configure root logger based on settings
     logging.basicConfig(level=settings.log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger.info(f"Configuration loaded successfully. Log level: {settings.log_level}, Markup: {settings.markup_factor}")
-    if settings.slicer_path_override:
-        logger.info(f"Using Slicer Path Override: {settings.slicer_path_override}")
+    if settings.slicer_path:
+        logger.info(f"Using Slicer Path: {settings.slicer_path}")
     # Log if API keys are present without exposing the keys themselves
     if settings.gemini_api_key: logger.info("Gemini API Key detected.")
     if settings.openai_api_key: logger.info("OpenAI API Key detected.")
