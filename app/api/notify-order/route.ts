@@ -35,6 +35,8 @@ export async function POST(req: NextRequest) {
     
     // Upload files if provided
     const filePromises = [];
+    
+    // Regular files
     for (let i = 0; formData.has(`file${i}`); i++) {
       const file = formData.get(`file${i}`) as File;
       if (file) {
@@ -46,6 +48,28 @@ export async function POST(req: NextRequest) {
             filename: file.name,
             file: buffer,
             initial_comment: `File for Order ${order.orderId}: ${file.name}`,
+          })
+        );
+      }
+    }
+    
+    // 3D model files with special handling
+    for (let i = 0; formData.has(`modelFile${i}`); i++) {
+      const modelFile = formData.get(`modelFile${i}`) as File;
+      if (modelFile) {
+        const buffer = Buffer.from(await modelFile.arrayBuffer());
+        
+        // Determine file type extension for display
+        const fileExtension = modelFile.name.split('.').pop()?.toLowerCase() || '';
+        const fileType = getFileType(fileExtension);
+        
+        filePromises.push(
+          slackClient.files.upload({
+            channels: channelId,
+            filename: modelFile.name,
+            file: buffer,
+            filetype: fileType,
+            initial_comment: `🧱 3D Model for Order ${order.orderId}: ${modelFile.name}`,
           })
         );
       }
@@ -74,6 +98,27 @@ export async function POST(req: NextRequest) {
 }
 
 /**
+ * Helper function to determine file type for Slack
+ * 
+ * @param extension The file extension
+ * @returns The Slack file type
+ */
+function getFileType(extension: string): string {
+  // Map common 3D file extensions to Slack file types
+  switch (extension) {
+    case 'stl':
+    case 'obj':
+    case 'step':
+    case 'stp':
+    case 'glb':
+    case 'gltf':
+      return 'binary'; // Slack doesn't have specific 3D type, use binary
+    default:
+      return 'auto'; // Let Slack determine
+  }
+}
+
+/**
  * Format the order message for Slack
  * 
  * @param order Order notification data
@@ -92,6 +137,12 @@ function formatOrderMessage(order: OrderNotification) {
     `${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.postal_code}`,
     order.shippingAddress.country,
   ].filter(Boolean).join('\n');
+  
+  // Get the order date
+  const orderDateStr = formData.get('orderDate') as string;
+  const orderDate = orderDateStr 
+    ? new Date(orderDateStr).toLocaleString() 
+    : new Date().toLocaleString();
   
   // Create the message blocks
   return [
@@ -113,6 +164,19 @@ function formatOrderMessage(order: OrderNotification) {
         {
           type: 'mrkdwn',
           text: `*Email:*\n${order.customerEmail}`,
+        },
+      ],
+    },
+    {
+      type: 'section',
+      fields: [
+        {
+          type: 'mrkdwn',
+          text: `*Order Date:*\n${orderDate}`,
+        },
+        {
+          type: 'mrkdwn',
+          text: `*Order ID:*\n${order.orderId}`,
         },
       ],
     },
@@ -146,11 +210,14 @@ function formatOrderMessage(order: OrderNotification) {
       },
     ] : []),
     {
+      type: 'divider'
+    },
+    {
       type: 'context',
       elements: [
         {
           type: 'mrkdwn',
-          text: `Order received at ${new Date().toLocaleString()}`,
+          text: `ProtonDemand Manufacturing • Order received at ${new Date().toLocaleString()}`,
         },
       ],
     },

@@ -14,12 +14,12 @@ from dataclasses import dataclass
 import trimesh
 
 # from quote_system.core.exceptions import SlicerExecutionError, FileFormatError
-from core.exceptions import SlicerExecutionError, FileFormatError, ConfigurationError, SlicerError
+from ...core.exceptions import SlicerExecutionError, FileFormatError, ConfigurationError, SlicerError
 # from quote_system.core.common_types import Print3DTechnology, MaterialInfo # Added MaterialInfo
-from core.common_types import Print3DTechnology, MaterialInfo # Added MaterialInfo
+from ...core.common_types import Print3DTechnology, MaterialInfo # Added MaterialInfo
 # from quote_system.config import settings # Access global config
-from config import settings # Access global config
-from core import utils
+from ...config import settings # Access global config
+from ...core import utils
 
 logger = logging.getLogger(__name__)
 
@@ -303,15 +303,39 @@ def run_slicer(
         cmd = [
             slicer_executable_path,
             "--load", config_file_path,
-            "--export-gcode", # Force gcode export to get comments
-            "--output", gcode_output_path,
-            stl_file_path
+            # "--export-gcode", # Force gcode export to get comments
+            # "--output", gcode_output_path,
         ]
+        
+        # Technology-specific output arguments
+        if technology == Print3DTechnology.SLA:
+            cmd.extend(["--export-sla", "--output", gcode_output_path.replace(".gcode", ".sl1")]) # Use .sl1 or similar for SLA
+            # Ensure printer technology is set correctly for SLA profiles
+        elif technology == Print3DTechnology.SLS:
+             # What output does PrusaSlicer use for SLS? Assuming similar export needed.
+             # Might need adjustment based on actual PrusaSlicer SLS capabilities
+             cmd.extend(["--export-sls", "--output", gcode_output_path.replace(".gcode", ".sls")]) # Hypothetical
+        else: # FDM (Default)
+             cmd.extend(["--export-gcode", "--output", gcode_output_path])
+             
+        # Add centering flag - attempts to fix "Nothing to print" errors
+        cmd.append("--center") 
+        cmd.append("0,0") # Center at XY origin (adjust if needed)
+        
+        # Add the input file path LAST
+        cmd.append(stl_file_path)
 
         logger.info(f"Running slicer command: {' '.join(cmd)}")
         slicer_start_time = time.time()
 
         try:
+            # Determine expected output path based on technology
+            expected_output_path = gcode_output_path # Default to .gcode
+            if technology == Print3DTechnology.SLA:
+                expected_output_path = gcode_output_path.replace(".gcode", ".sl1")
+            elif technology == Print3DTechnology.SLS:
+                expected_output_path = gcode_output_path.replace(".gcode", ".sls") # Assuming .sls
+            
             # Execute the command
             process = subprocess.run(
                 cmd,
@@ -341,32 +365,50 @@ def run_slicer(
                      error_message += f"\nSlicer Output (stderr):\n{process.stderr[:1000]}..." # Limit length
                 raise SlicerError(error_message)
 
-            # Check if G-code file was created
-            if not os.path.exists(gcode_output_path) or os.path.getsize(gcode_output_path) == 0:
-                 # Sometimes slicer exits 0 but fails to write output (e.g. if model is invalid)
-                 error_message = f"Slicer ran successfully (code 0) but did not produce G-code output file: {gcode_output_path}"
-                 if process.stderr: # Include stderr for clues
+            # Check if the CORRECT output file was created
+            if not os.path.exists(expected_output_path) or os.path.getsize(expected_output_path) == 0:
+                 # Sometimes slicer exits 0 but fails to write output (e.g. if model is invalid or off-plate)
+                 error_message = f"Slicer ran successfully (code 0) but did not produce expected output file: {os.path.basename(expected_output_path)}"
+                 # Include stdout/stderr for clues, especially the "Nothing to print" message
+                 if process.stdout:
+                     error_message += f"\nSlicer Output (stdout):\n{process.stdout[:1000]}..."
+                 if process.stderr:
                       error_message += f"\nSlicer Output (stderr):\n{process.stderr[:1000]}..."
                  raise SlicerError(error_message)
+            
+            # --- G-code Parsing Logic --- 
+            print_time_sec = None
+            filament_mm3 = None
+            filament_g = None
+            slicer_warnings = [] # Placeholder for warnings
 
-            # Read the G-code file content
-            with open(gcode_output_path, "r") as f:
-                gcode_content = f.read()
+            # Only attempt to parse G-code comments for FDM
+            if technology == Print3DTechnology.FDM:
+                logger.info("Attempting to parse G-code comments for FDM estimates...")
+                # Read the G-code file content
+                with open(expected_output_path, "r") as f:
+                    gcode_content = f.read()
 
-            # Parse the G-code for estimates
-            print_time_sec, filament_mm3, filament_g = _parse_gcode_estimates(gcode_content)
+                # Parse the G-code for estimates
+                print_time_sec, filament_mm3, filament_g = _parse_gcode_estimates(gcode_content)
 
-            # Validate parsed results - essential estimates must be present
-            if print_time_sec is None or filament_mm3 is None:
-                 error_msg = "Failed to parse critical time or volume estimates from slicer G-code output."
-                 logger.error(error_msg)
-                 # Include G-code snippet in error potentially
-                 gcode_end_snippet = gcode_content[-2000:] # Last ~2KB usually has comments
-                 logger.debug(f"G-code end snippet for parsing failure:\n{gcode_end_snippet}")
-                 raise SlicerError(error_msg)
+                # Validate parsed results - essential estimates must be present for FDM
+                if print_time_sec is None or filament_mm3 is None:
+                     error_msg = "Failed to parse critical time or volume estimates from FDM G-code output."
+                     logger.error(error_msg)
+                     # Include G-code snippet in error potentially
+                     gcode_end_snippet = gcode_content[-2000:] # Last ~2KB usually has comments
+                     logger.debug(f"G-code end snippet for parsing failure:\n{gcode_end_snippet}")
+                     raise SlicerError(error_msg)
+            else:
+                # For SLA/SLS, we currently cannot parse estimates from the output file
+                logger.warning(f"Parsing estimates from slicer output is not supported for {technology}. Slicer ran, but estimates will be heuristic.")
+                # We return None for estimates, signaling the caller to use heuristics
+                pass # Estimates remain None
 
-            # If weight (g) wasn't parsed directly, calculate it from volume and density
-            if filament_g is None:
+            # If weight (g) wasn't parsed directly (e.g., FDM but missing comment, or non-FDM),
+            # calculate it from volume and density IF volume was parsed (only FDM for now)
+            if filament_g is None and filament_mm3 is not None: # Only calculate if volume was parsed (FDM)
                  if material_density_g_cm3 is None or material_density_g_cm3 <= 0:
                       raise ConfigurationError("Material density must be provided and positive if slicer does not report weight.")
                  # Convert mm3 to cm3 for density calculation
@@ -374,10 +416,6 @@ def run_slicer(
                  filament_g = filament_cm3 * material_density_g_cm3
                  logger.info(f"Calculated filament weight from volume: {filament_cm3:.2f} cm3 * {material_density_g_cm3} g/cm3 = {filament_g:.2f} g") # Changed level to info
 
-
-            # Placeholder for warnings from slicer output (if needed)
-            slicer_warnings = []
-            # Example: could parse process.stderr for lines starting with "Warning:"
 
             return SlicerResult(
                 print_time_seconds=print_time_sec,

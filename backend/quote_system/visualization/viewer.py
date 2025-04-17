@@ -1,10 +1,13 @@
 # visualization/viewer.py
 
+import os
 import logging
 import trimesh
 from typing import List, Optional
 import numpy as np
 import json
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 # Conditional import for PyVista and GUI backend (e.g., PyQt6 or PySide6)
 try:
@@ -21,7 +24,7 @@ try:
 except ImportError:
     PYVISTA_AVAILABLE = False
 
-from core.common_types import DFMReport, DFMIssue, QuoteResult
+from ..core.common_types import DFMReport, DFMIssue, QuoteResult
 
 logger = logging.getLogger(__name__)
 

@@ -1,216 +1,225 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, FormEvent } from 'react';
 import { useStripe, useElements, CardElement } from '@stripe/react-stripe-js';
-import { useRouter } from 'next/navigation';
 import { GlowButton } from '@/components/ui/glow-button';
-import { createPaymentIntent } from '@/lib/stripe';
-import { useCart, CartItem } from '@/lib/cart';
-import { sendOrderNotification } from '@/lib/slack';
+import { createPaymentIntent, PaymentIntentResponse, SimpleCartItem } from '@/lib/api';
+import { useCart } from '@/lib/cart';
+import { Spinner } from "@/components/ui/spinner";
 
 interface CheckoutFormProps {
-  items: CartItem[];
-  totalPrice: number;
-  subtotalPrice: number;
-  shippingCost: number;
-  formData: {
-    fullName: string;
-    email: string;
-    phone: string;
-    address: string;
-    city: string;
-    state: string;
-    zipCode: string;
-    country: string;
-    specialInstructions?: string;
-  };
-  onPrevStep: () => void;
+  totalAmount: number;
+  onPaymentSuccess: (paymentIntentId: string) => void;
+  onPaymentError: (errorMessage: string) => void;
+  onLoadingChange: (isLoading: boolean) => void;
 }
 
+const cardElementOptions = {
+  style: {
+    base: {
+      fontSize: '16px',
+      color: '#FFFFFF',
+      '::placeholder': {
+        color: 'rgba(255, 255, 255, 0.7)',
+      },
+      iconColor: '#FFFFFF',
+      fontFamily: '"Avenir Next", system-ui, sans-serif',
+    },
+    invalid: {
+      color: '#F46036',
+      iconColor: '#F46036',
+    },
+  },
+  hidePostalCode: true,
+};
+
 export default function CheckoutForm({ 
-  items, 
-  totalPrice, 
-  subtotalPrice,
-  shippingCost,
-  formData, 
-  onPrevStep 
+  totalAmount, 
+  onPaymentSuccess, 
+  onPaymentError, 
+  onLoadingChange
 }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
-  const router = useRouter();
-  const { clearCart } = useCart();
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
+  const { items, clearCart } = useCart();
   
-  const handleSubmit = async (e: React.FormEvent) => {
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [couponCode, setCouponCode] = useState('');
+  const [discount, setDiscount] = useState(0);
+  const [isTestMode, setIsTestMode] = useState(false);
+  const [discountedAmount, setDiscountedAmount] = useState(totalAmount);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    
+    setErrorMessage(null);
+
     if (!stripe || !elements) {
-      // Stripe.js has not loaded yet
+      console.error("Stripe.js has not loaded yet.");
+      onPaymentError("Payment gateway is not ready. Please wait and try again.");
       return;
     }
+
+    const cardElement = elements.getElement(CardElement);
+    if (!cardElement) {
+        console.error("Card Element not found.");
+        onPaymentError("Payment input is missing. Please refresh the page.");
+        return;
+    }
     
-    setIsProcessing(true);
-    setErrorMessage('');
-    
+    if (!email || !name) {
+      setErrorMessage("Please enter your name and email.");
+      return;
+    }
+
+    onLoadingChange(true);
+
     try {
-      // Create a payment intent
-      const paymentIntentResponse = await createPaymentIntent({
-        items,
-        customerEmail: formData.email,
-        customerName: formData.fullName,
-        shippingAddress: {
-          line1: formData.address,
-          city: formData.city,
-          state: formData.state,
-          postal_code: formData.zipCode,
-          country: formData.country,
-        },
-        specialInstructions: formData.specialInstructions,
-        metadata: {
-          orderType: 'manufacturing',
-          phone: formData.phone,
-        },
+      const orderItems: SimpleCartItem[] = items.map(item => ({
+        id: item.id,
+        name: item.fileName,
+        quantity: item.quantity,
+        price: item.price 
+      }));
+
+      const piResponse = await createPaymentIntent({
+        items: orderItems,
+        currency: 'usd',
+        customer_email: email, 
+        metadata: { 
+            customerName: name,
+            cartItemIds: JSON.stringify(items.map(i => i.id)),
+         },
+        couponCode: couponCode || undefined  // Only include if provided
       });
       
-      // Confirm the payment
-      const cardElement = elements.getElement(CardElement);
-      if (!cardElement) {
-        throw new Error('Card element not found');
+      // Update UI if discount was applied
+      if (piResponse.discount) {
+        setDiscount(piResponse.discount);
+        setDiscountedAmount(totalAmount * (1 - piResponse.discount / 100));
       }
       
-      const { error, paymentIntent } = await stripe.confirmCardPayment(
-        paymentIntentResponse.clientSecret,
+      // Set test mode flag for UI feedback
+      if (piResponse.isTestMode) {
+        setIsTestMode(true);
+      }
+
+      if (piResponse.error || !piResponse.clientSecret) {
+        throw new Error(piResponse.error || 'Failed to initialize payment.');
+      }
+
+      const { error: confirmError, paymentIntent } = await stripe.confirmCardPayment(
+        piResponse.clientSecret,
         {
           payment_method: {
             card: cardElement,
             billing_details: {
-              name: formData.fullName,
-              email: formData.email,
-              phone: formData.phone,
-              address: {
-                line1: formData.address,
-                city: formData.city,
-                state: formData.state,
-                postal_code: formData.zipCode,
-                country: formData.country,
-              }
+              name: name,
+              email: email,
             },
           },
         }
       );
-      
-      if (error) {
-        throw new Error(error.message);
+
+      if (confirmError) {
+        throw new Error(confirmError.message || 'Payment confirmation failed.');
       }
-      
-      if (paymentIntent.status === 'succeeded') {
-        // Payment successful
-        
-        // Get model files from items
-        const modelFiles = items.map(item => {
-          // In a real implementation, you would retrieve the actual files
-          // For now, we'll just use placeholder data
-          return new File(
-            [new Blob(['placeholder'])], 
-            item.fileName, 
-            { type: 'application/octet-stream' }
-          );
-        });
-        
-        // Send order notification to Slack
-        await sendOrderNotification({
-          orderId: paymentIntentResponse.paymentIntentId,
-          customerName: formData.fullName,
-          customerEmail: formData.email,
-          items: items.map(item => ({
-            id: item.id,
-            fileName: item.fileName,
-            process: item.process,
-            material: item.material,
-            finish: item.finish,
-            quantity: item.quantity,
-            price: item.price,
-          })),
-          totalPrice,
-          currency: 'usd',
-          specialInstructions: formData.specialInstructions,
-          shippingAddress: {
-            line1: formData.address,
-            city: formData.city,
-            state: formData.state,
-            postal_code: formData.zipCode,
-            country: formData.country,
-          },
-          files: modelFiles,
-        });
-        
-        // Clear the cart and redirect to success page
-        clearCart();
-        router.push('/checkout/success');
+
+      if (paymentIntent?.status === 'succeeded') {
+        console.log('PaymentIntent succeeded:', paymentIntent);
+        onPaymentSuccess(paymentIntent.id);
+        clearCart(); 
+      } else {
+        console.warn('PaymentIntent status:', paymentIntent?.status);
+        throw new Error(`Payment processing resulted in status: ${paymentIntent?.status || 'unknown'}`);
       }
+
     } catch (error) {
-      console.error('Payment error:', error);
-      setErrorMessage(error instanceof Error ? error.message : 'An error occurred during payment processing');
+      console.error('Payment processing error:', error);
+      const message = error instanceof Error ? error.message : 'An unknown payment error occurred.';
+      setErrorMessage(message);
+      onPaymentError(message);
     } finally {
-      setIsProcessing(false);
+      onLoadingChange(false);
     }
   };
-  
-  const cardElementOptions = {
-    style: {
-      base: {
-        fontSize: '16px',
-        color: '#FFFFFF',
-        '::placeholder': {
-          color: 'rgba(255, 255, 255, 0.5)',
-        },
-        iconColor: '#FFFFFF',
-      },
-      invalid: {
-        color: '#F46036',
-        iconColor: '#F46036',
-      },
-    },
-    hidePostalCode: true,
-  };
-  
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      <div className="mb-6">
-        <h3 className="text-xl font-andale mb-4 text-white">Payment Information</h3>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-white/70 mb-2 font-avenir">Card Details</label>
-            <div className="bg-[#0A1525] border border-[#1E2A45] p-3 rounded-none">
-              <CardElement options={cardElementOptions} />
-            </div>
+       <div className="space-y-4">
+         <div>
+            <label htmlFor="name" className="block text-sm font-medium text-white/70 font-avenir mb-1">Full Name</label>
+            <input
+              id="name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir text-sm focus:ring-[#5fe496] focus:border-[#5fe496] outline-none"
+              placeholder="Jane Doe"
+            />
           </div>
+         <div>
+            <label htmlFor="email" className="block text-sm font-medium text-white/70 font-avenir mb-1">Email</label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir text-sm focus:ring-[#5fe496] focus:border-[#5fe496] outline-none"
+              placeholder="jane.doe@example.com"
+            />
+          </div>
+       </div>
+
+      <div>
+        <label htmlFor="couponCode" className="block text-sm font-medium text-white/70 font-avenir mb-1">Coupon Code (Optional)</label>
+        <input
+          id="couponCode"
+          type="text"
+          value={couponCode}
+          onChange={(e) => setCouponCode(e.target.value.trim())}
+          className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir text-sm focus:ring-[#5fe496] focus:border-[#5fe496] outline-none"
+          placeholder="Enter coupon or test code"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-white/70 font-avenir mb-1">Card Details</label>
+        <div className="bg-[#0A1525] border border-[#1E2A45] p-3 rounded-none">
+          <CardElement options={cardElementOptions} />
         </div>
       </div>
       
-      {errorMessage && (
-        <div className="p-4 border border-[#F46036] bg-[#F46036]/10 text-[#F46036] mb-4 font-avenir">
-          {errorMessage}
+      {/* Show discount message if applied */}
+      {discount > 0 && (
+        <div className="text-sm text-[#5fe496] font-avenir">
+          Discount applied: {discount}% off
         </div>
       )}
       
-      <div className="flex justify-between">
-        <GlowButton
-          type="button"
-          onClick={onPrevStep}
-          variant="outline"
-        >
-          Back
-        </GlowButton>
-        
+      {/* Show test mode message */}
+      {isTestMode && (
+        <div className="text-sm text-[#F46036] font-avenir">
+          Test mode active - no actual charge will be processed
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="text-sm text-[#F46036] font-avenir">
+          {errorMessage}
+        </div>
+      )}
+
+      <div className="pt-2">
         <GlowButton
           type="submit"
-          disabled={isProcessing || !stripe}
-          className="bg-[#F46036] text-white hover:bg-[#F46036]/80"
+          disabled={!stripe || !elements}
+          className="w-full bg-[#5fe496] text-[#0A1525] hover:bg-[#F46036] hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {isProcessing ? 'Processing...' : `Pay $${totalPrice.toFixed(2)}`}
+          Pay ${discount > 0 ? discountedAmount.toFixed(2) : totalAmount.toFixed(2)}
         </GlowButton>
       </div>
     </form>

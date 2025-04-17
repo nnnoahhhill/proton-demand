@@ -1,16 +1,25 @@
 "use client";
 
 import { useState, useRef, FormEvent, ChangeEvent, useEffect } from "react";
-import { getQuote, materialOptions, finishOptions, QuoteResponse, DFMIssue } from "@/lib/api";
+import {
+  getQuote,
+  materialOptions,
+  finishOptions,
+  QuoteResponse,
+  DFMIssue,
+  createCheckoutSession
+} from "@/lib/api";
 import { GlowButton } from "@/components/ui/glow-button";
 import { useCart } from "@/lib/cart";
 import { useRouter } from "next/navigation";
 import { ModelViewer } from "@/components/model-viewer";
 import { Spinner } from "@/components/ui/spinner";
 import { FileUp, Info, RotateCw, Eye, EyeOff } from "lucide-react";
+import { loadStripe } from '@stripe/stripe-js';
 
 // Define the process type for stricter typing
-type ProcessType = '3DP_FDM' | '3DP_SLA' | '3DP_SLS' | 'CNC' | 'SHEET_METAL';
+// Use values matching the backend ManufacturingProcess enum
+type ProcessType = '3D Printing' | 'CNC Machining' | 'Sheet Metal';
 
 // Define option type
 interface Option {
@@ -19,7 +28,7 @@ interface Option {
 }
 
 export default function NewQuoteForm() {
-  const [process, setProcess] = useState<ProcessType>('3DP_FDM');
+  const [manufacturingProcess, setManufacturingProcess] = useState<ProcessType>('3D Printing');
   const [material, setMaterial] = useState<string>('');
   const [finish, setFinish] = useState<string>('standard'); // Default to standard finish
   const [modelFile, setModelFile] = useState<File | null>(null);
@@ -30,6 +39,8 @@ export default function NewQuoteForm() {
   const [addedToCart, setAddedToCart] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [showModelControls, setShowModelControls] = useState(true);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
 
   // Get cart context
   const { addItem } = useCart();
@@ -39,9 +50,14 @@ export default function NewQuoteForm() {
   const modelFileRef = useRef<HTMLInputElement>(null);
   const drawingFileRef = useRef<HTMLInputElement>(null);
 
+  // Initialize Stripe outside the component rendering cycle
+  const stripePromise = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+    ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+    : null;
+
   // Handle process change
   const handleProcessChange = (value: ProcessType) => {
-    setProcess(value);
+    setManufacturingProcess(value);
     // Reset material and finish when process changes
     setMaterial('');
     setFinish('');
@@ -139,7 +155,7 @@ export default function NewQuoteForm() {
     e.preventDefault();
 
     // Validate form
-    if (!process) {
+    if (!manufacturingProcess) {
       setError('Please select a manufacturing process');
       return;
     }
@@ -156,17 +172,13 @@ export default function NewQuoteForm() {
 
     // Set default finish based on process
     if (!finish) {
-      if (process === '3DP_FDM') {
-        setFinish('standard');
-      } else if (process === '3DP_SLA') {
-        setFinish('standard');
-      } else if (process === '3DP_SLS') {
+      if (manufacturingProcess === '3D Printing') {
         setFinish('standard');
       }
     }
 
     console.log("Submitting form with:",
-      "process=", process,
+      "process=", manufacturingProcess,
       "material=", material,
       "finish=", finish,
       "modelFile=", modelFile.name,
@@ -178,33 +190,70 @@ export default function NewQuoteForm() {
     setResponse(null);
     setLoading(true);
     setAddedToCart(false);
+    setCheckoutError('');
 
     try {
       // Get quote from API
       // Always use standard finish for 3D printing
       const standardFinish = 'standard';
 
-      const quoteResponse = await getQuote({
-        process,
+      // First attempt
+      let quoteResponse = await getQuote({
+        process: manufacturingProcess,
         material,
         finish: standardFinish,
         modelFile,
         drawingFile: drawingFile || undefined
       });
 
+      // Handle timeout or connection errors with a retry
+      if (!quoteResponse.success && 
+          (quoteResponse.error_message?.includes('timeout') || 
+           quoteResponse.error_message?.includes('network') ||
+           quoteResponse.error_message?.includes('failed'))) {
+        
+        console.log("Retrying quote request after initial failure...");
+        setError('Connection issue detected. Retrying...');
+        
+        // Wait 2 seconds before retry
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Second attempt
+        quoteResponse = await getQuote({
+          process: manufacturingProcess,
+          material,
+          finish: standardFinish,
+          modelFile,
+          drawingFile: drawingFile || undefined
+        });
+      }
+
       console.log("API response:", quoteResponse);
 
-      // Set response
+      // Set response REGARDLESS of success, so DFM issues can be displayed
       setResponse(quoteResponse);
 
-      // Check for errors
+      // --- SIMPLIFIED ERROR HANDLING --- 
+      // If success is false, display the error message from the backend.
+      // If success is true, any DFM issues will be shown in their own section.
       if (!quoteResponse.success) {
-        console.error("API error:", quoteResponse.error || quoteResponse.message);
-        setError(quoteResponse.error || quoteResponse.message || 'Failed to get quote');
+        const errMsg = quoteResponse.error_message || 'Unknown error occurred during quote generation.';
+        console.error("Quote generation failed:", errMsg);
+        setError(errMsg);
+      } else {
+        // Clear any previous generic errors if successful
+        setError(''); 
       }
+      // --- END SIMPLIFIED ERROR HANDLING ---
+      
+      // Removed the complex error checking logic based on DFM issues
+
     } catch (err) {
       console.error('Error submitting quote form:', err);
-      setError(err instanceof Error ? err.message : 'An unknown error occurred');
+      // Handle client-side fetch errors (network, etc.)
+      setError(err instanceof Error ? `Network/Fetch Error: ${err.message}` : 'An unknown client-side error occurred');
+      // Ensure response state is cleared on fetch error
+      setResponse(null);
     } finally {
       setLoading(false);
     }
@@ -215,16 +264,66 @@ export default function NewQuoteForm() {
     if (response && response.success && modelFile) {
       addItem(response, modelFile.name);
       setAddedToCart(true);
+      setCheckoutError('');
     }
   };
 
   // Proceed to checkout
-  const handleCheckout = () => {
-    if (response && response.success && modelFile) {
-      if (!addedToCart) {
-        addItem(response, modelFile.name);
+  const handleCheckout = async () => {
+    if (!response || !response.success || !response.customer_price || !modelFile || !stripePromise) {
+      console.error('Checkout prerequisites not met:', { response, modelFile, stripePromise });
+      setCheckoutError(
+        !stripePromise
+          ? 'Stripe is not configured correctly. Please check your environment variables.'
+          : response?.error_message || 'Cannot proceed to checkout. Please ensure you have a valid quote.'
+      );
+      return;
+    }
+
+    setIsCheckingOut(true);
+    setCheckoutError('');
+
+    try {
+      // 1. Call backend to create a checkout session
+      const checkoutResponse = await createCheckoutSession({
+        item_name: `Quote ${response.quote_id.substring(0, 8)} - ${modelFile.name}`,
+        price: response.customer_price,
+        currency: response.material_info?.currency || 'usd',
+        quantity: 1,
+        quote_id: response.quote_id,
+        file_name: modelFile.name
+      });
+
+      if (checkoutResponse.error || !checkoutResponse.sessionId) {
+        console.error("Failed to create checkout session:", checkoutResponse.error);
+        setCheckoutError(checkoutResponse.error || 'Failed to initiate payment session.');
+        setIsCheckingOut(false);
+        return;
       }
-      router.push('/checkout');
+
+      // 2. Redirect to Stripe Checkout
+      const stripe = await stripePromise;
+      if (!stripe) {
+        console.error('Stripe.js failed to load.');
+        setCheckoutError('Payment gateway failed to load. Please try again.');
+        setIsCheckingOut(false);
+        return;
+      }
+
+      const { error } = await stripe.redirectToCheckout({
+        sessionId: checkoutResponse.sessionId,
+      });
+
+      // If redirectToCheckout fails (e.g., network error), show an error message
+      if (error) {
+        console.error('Stripe redirect error:', error);
+        setCheckoutError(error.message || 'Failed to redirect to payment page.');
+      }
+      // No need to set isCheckingOut(false) here, as the user should be redirected
+    } catch (err) {
+      console.error('Error during checkout process:', err);
+      setCheckoutError(err instanceof Error ? err.message : 'An unknown error occurred during checkout.');
+      setIsCheckingOut(false);
     }
   };
 
@@ -239,9 +338,18 @@ export default function NewQuoteForm() {
     }
   }, [error]);
 
+  useEffect(() => {
+    if (checkoutError) {
+      const timer = setTimeout(() => {
+        setCheckoutError('');
+      }, 6000); // Longer timeout for checkout errors
+      return () => clearTimeout(timer);
+    }
+  }, [checkoutError]);
+
   // Reset the form
   const handleReset = () => {
-    setProcess('3DP_FDM');
+    setManufacturingProcess('3D Printing');
     setMaterial('');
     setFinish('standard'); // Keep standard finish
     setModelFile(null);
@@ -249,6 +357,7 @@ export default function NewQuoteForm() {
     setResponse(null);
     setError('');
     setAddedToCart(false);
+    setCheckoutError('');
 
     // Reset file inputs
     if (modelFileRef.current) modelFileRef.current.value = '';
@@ -257,13 +366,17 @@ export default function NewQuoteForm() {
 
   return (
     <div className="grid gap-6 md:grid-cols-2 relative">
-      {/* Loading overlay */}
-      {loading && (
+      {/* Loading overlay - Conditionally include checkout loading */}
+      {(loading || isCheckingOut) && (
         <div className="absolute inset-0 bg-[#0A1525]/80 backdrop-blur-sm z-10 flex items-center justify-center">
           <div className="flex flex-col items-center justify-center p-8 rounded-lg">
             <Spinner size={120} />
-            <p className="mt-6 text-xl text-white font-andale">Analyzing your model...</p>
-            <p className="mt-2 text-white/70 font-avenir">This may take a few moments</p>
+            <p className="mt-6 text-xl text-white font-andale">
+              {isCheckingOut ? 'Redirecting to secure payment...' : 'Analyzing your model...'}
+            </p>
+            <p className="mt-2 text-white/70 font-avenir">
+              {isCheckingOut ? 'Please wait' : 'This may take a few moments'}
+            </p>
           </div>
         </div>
       )}
@@ -348,13 +461,16 @@ export default function NewQuoteForm() {
 
       {/* Right Column - Manufacturing Options */}
       <div>
-        {/* Error message - Toast style with auto-dismiss */}
-        {error && (
+        {/* Error message - Show general error OR checkout error */}
+        {(error || checkoutError) && (
           <div className="absolute top-1/4 left-1/2 transform -translate-x-1/2 z-50 p-4 border border-[#F46036] bg-[#0A1525] text-[#F46036] font-avenir shadow-lg max-w-md transition-opacity duration-300 ease-in-out opacity-90 hover:opacity-100">
             <div className="flex justify-between items-start">
-              <div>{error}</div>
+              <div>{checkoutError || error}</div>
               <button
-                onClick={() => setError('')}
+                onClick={() => {
+                  setError('');
+                  setCheckoutError('');
+                }}
                 className="ml-4 text-white/70 hover:text-white"
               >
                 ×
@@ -369,11 +485,11 @@ export default function NewQuoteForm() {
             <div className="mb-6 border border-[#5fe496] bg-[#5fe496]/10 p-4">
               <h3 className="text-xl font-andale mb-2 text-[#5fe496]">Quote Generated!</h3>
               <div className="space-y-2 text-white">
-                <p><span className="font-medium">Quote ID:</span> {response.quoteId}</p>
-                <p><span className="font-medium">Price:</span> ${response.price?.toFixed(2)} {response.currency}</p>
-                <p><span className="font-medium">Lead Time:</span> 10 business days</p>
-                <p><span className="font-medium">Process:</span> {process.replace('3DP_', '')} Printing</p>
-                <p><span className="font-medium">Material:</span> {material}</p>
+                <p><span className="font-medium">Quote ID:</span> {response.quote_id}</p>
+                <p><span className="font-medium">Price:</span> ${response.customer_price?.toFixed(2)} {response.material_info?.currency || 'USD'}</p>
+                <p><span className="font-medium">Lead Time:</span> ~10 business days</p>
+                <p><span className="font-medium">Process:</span> {response.process}</p>
+                <p><span className="font-medium">Material:</span> {response.material_info?.name || 'N/A'}</p>
                 <p><span className="font-medium">Finish:</span> Standard High-Quality</p>
               </div>
             </div>
@@ -388,10 +504,10 @@ export default function NewQuoteForm() {
 
               {addedToCart ? (
                 <GlowButton
-                  onClick={handleCheckout}
+                  onClick={() => router.push('/cart')}
                   className="bg-[#5fe496] text-[#0A1525] hover:bg-[#5fe496]/80"
                 >
-                  Proceed to Checkout
+                  View Cart
                 </GlowButton>
               ) : (
                 <GlowButton
@@ -407,41 +523,15 @@ export default function NewQuoteForm() {
                   onClick={handleCheckout}
                   className="bg-[#F46036] text-white hover:bg-[#F46036]/80"
                 >
-                  View Cart
+                  Checkout Now
                 </GlowButton>
               )}
             </div>
           </div>
         )}
 
-        {/* DFM issues */}
-        {response?.dfmIssues && response.dfmIssues.length > 0 && (
-          <div className="border border-[#1E2A45] bg-[#0C1F3D]/50 p-4 h-full flex flex-col">
-            <div className="mb-6 border border-[#F46036] bg-[#F46036]/10 p-4">
-              <h3 className="text-xl font-andale mb-2 text-[#F46036]">Manufacturing Issues</h3>
-              <p className="mb-4 text-white">The part cannot be manufactured due to the following issues:</p>
-              <ul className="list-disc pl-5 space-y-2">
-                {response.dfmIssues.map((issue: DFMIssue, index: number) => (
-                  <li key={index} className="text-[#F46036]">
-                    <span className="font-medium">{issue.type}: </span>
-                    <span>{issue.description}</span>
-                    {issue.location && (
-                      <span className="block text-sm">
-                        Location: x={issue.location.x.toFixed(2)}, y={issue.location.y.toFixed(2)}, z={issue.location.z.toFixed(2)}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="mt-4">
-              <GlowButton onClick={handleReset} className="bg-[#1e87d6] text-white hover:bg-[#1e87d6]/80">Try Again</GlowButton>
-            </div>
-          </div>
-        )}
-
-        {!response?.success && !response?.dfmIssues && (
+        {/* Original Quote Form - Render only if NO response exists yet */}
+        {!response && (
           <div className="border border-[#1E2A45] bg-[#0C1F3D]/50 p-4 h-full flex flex-col">
             <div className="mb-6">
               <h2 className="text-xl font-andale mb-4 text-white">Manufacturing Options</h2>
@@ -484,14 +574,21 @@ export default function NewQuoteForm() {
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-white font-avenir">Process</label>
                   <select
-                    value={process}
+                    value={manufacturingProcess}
                     onChange={(e) => handleProcessChange(e.target.value as ProcessType)}
                     className="w-full bg-[#0A1525] border border-[#1E2A45] text-white p-2 rounded-none focus:outline-none focus:ring-1 focus:ring-[#5fe496] font-avenir"
                   >
                     <option value="" disabled>Select process</option>
-                    <option value="3DP_FDM">FDM</option>
+                    {/* Use values matching backend enum */}
+                    <option value="3D Printing">3D Printing (All Types)</option> 
+                    {/* Keep specific technology selection separate for now, 
+                        or adjust backend to accept FDM/SLA/SLS directly if needed */}
+                    {/* <option value="3DP_FDM">FDM</option>
                     <option value="3DP_SLA">SLA</option>
-                    <option value="3DP_SLS">SLS</option>
+                    <option value="3DP_SLS">SLS</option> */}
+                    {/* Add CNC/Sheet Metal when backend supports them fully */}
+                    {/* <option value="CNC Machining">CNC Machining</option> */}
+                    {/* <option value="Sheet Metal">Sheet Metal</option> */}
                   </select>
                 </div>
 
@@ -503,25 +600,39 @@ export default function NewQuoteForm() {
                     className="w-full bg-[#0A1525] border border-[#1E2A45] text-white p-2 rounded-none focus:outline-none focus:ring-1 focus:ring-[#5fe496] font-avenir"
                   >
                     <option value="" disabled>Select material</option>
-                    {process === '3DP_FDM' && (
+                    {/* Logic might need adjustment based on how materials are fetched/filtered for the chosen *process* */}
+                    {/* Example: Fetch materials using /materials/{manufacturingProcess} */}
+                    {/* For now, let's keep the original material options, 
+                        assuming the backend /quote can handle any material ID if the process is '3D Printing' */}
+                    {/* If specific technology (FDM/SLA/SLS) is needed, the UI/backend interaction needs rework */}
+                    {/* FDM Materials */}
+                    {/* Assuming backend uses fdm_<material>_standard format based on error message */}
+                    <option value="fdm_pla_standard">PLA</option>
+                    <option value="fdm_abs_standard">ABS</option>
+                    <option value="fdm_petg_standard">PETG</option>
+                    <option value="fdm_tpu_flexible">TPU (Flexible)</option>
+                    {/* Note: Backend error lists 'fdm_nylon12_standard', UI had 'nylon_12' */}
+                    <option value="fdm_nylon12_standard">Nylon 12 (FDM)</option> 
+                    <option value="fdm_asa_standard">ASA</option>
+                    {/* SLS Materials - Use IDs from backend error message */}
+                    <option value="sls_nylon12_white">Nylon 12 - White (SLS)</option>
+                    <option value="sls_nylon12_black">Nylon 12 - Black (SLS)</option>
+                    {/* SLA Materials - Use IDs from backend error message */}
+                    <option value="sla_resin_standard">Standard Resin (SLA - Clear)</option>
+                    <option value="sla_resin_tough">Tough Resin (SLA)</option> 
+                    
+                    {/* {manufacturingProcess === '3D Printing' && (
                       <>
+                        {/* Need to fetch materials based on the selected PROCESS, not specific tech here * /}
                         <option value="pla">PLA</option>
                         <option value="abs">ABS</option>
                         <option value="petg">PETG</option>
                         <option value="tpu">TPU (Flexible)</option>
-                      </>
-                    )}
-                    {process === '3DP_SLS' && (
-                      <>
                         <option value="nylon12-white">Nylon 12 - White</option>
                         <option value="nylon12-black">Nylon 12 - Black</option>
-                      </>
-                    )}
-                    {process === '3DP_SLA' && (
-                      <>
                         <option value="standard-resin">Standard Resin</option>
                       </>
-                    )}
+                    )} */}
                   </select>
                 </div>
               </div>

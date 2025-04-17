@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { QuoteResponse } from './api';
 
 // Define cart item interface
@@ -29,6 +29,7 @@ interface CartContextType {
   totalPrice: number;
   subtotalPrice: number;
   shippingCost: number;
+  isInitialized: boolean;
 }
 
 // Create context with default values
@@ -42,6 +43,7 @@ const CartContext = createContext<CartContextType>({
   totalPrice: 0,
   subtotalPrice: 0,
   shippingCost: 0,
+  isInitialized: false,
 });
 
 // Hook to use cart context
@@ -80,50 +82,63 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items, isInitialized]);
 
   // Add item to cart
-  const addItem = (quote: QuoteResponse, fileName: string) => {
-    if (!quote.success || !quote.price) return;
+  const addItem = useCallback((quote: QuoteResponse, fileName: string) => {
+    // Use customer_price instead of price
+    if (!quote.success || !quote.customer_price) {
+        console.error("Cannot add item to cart: Quote was not successful or price is missing.", quote);
+        return;
+    }
 
-    // Calculate weight in kg - we'll use volume as an approximation if actual weight isn't available
-    // Assuming a density of 1.05 g/cm³ for typical 3D printing materials
-    const volume = quote.manufacturingDetails?.volume || 0; // in mm³
-    const volumeInCm3 = volume / 1000; // Convert mm³ to cm³
-    const estimatedWeightInKg = volumeInCm3 * 0.00105; // Convert to kg using density
+    // Calculate weight in kg using cost_estimate if available
+    const weightInGrams = quote.cost_estimate?.material_weight_g;
+    // Fallback to a rough estimate using volume if weight is not directly provided
+    // Density assumption (1.05 g/cm³) might need refinement
+    const volumeInCm3 = quote.cost_estimate?.total_volume_cm3 || 0;
+    const estimatedWeightInKg = weightInGrams
+      ? weightInGrams / 1000
+      : volumeInCm3 * 0.00105; // Convert cm³ to kg using assumed density
 
     const newItem: CartItem = {
-      id: quote.quoteId,
-      process: quote.manufacturingDetails?.process || '',
-      material: quote.manufacturingDetails?.material || '',
-      finish: quote.manufacturingDetails?.finish || '',
-      price: quote.price,
-      currency: quote.currency || 'USD',
-      leadTimeInDays: 10, // Set fixed lead time to 10 business days
+      id: quote.quote_id, // Use quote_id instead of quoteId
+      process: quote.process || '', // Use quote.process
+      material: quote.material_info?.name || '', // Use quote.material_info.name
+      // Finish might not be explicitly in the response, using standard for now
+      finish: 'Standard High-Quality', // Assuming standard finish based on form display
+      price: quote.customer_price, // Use customer_price
+      currency: quote.material_info?.currency || 'USD', // Use material_info.currency
+      leadTimeInDays: 10, // TODO: Get this from quote response if available later
       fileName,
       addedAt: new Date(),
       quantity: 1,
-      weightInKg: estimatedWeightInKg,
+      // Use calculated weight, ensuring it's a number
+      weightInKg: typeof estimatedWeightInKg === 'number' ? estimatedWeightInKg : 0,
     };
+
+    console.log("Adding item to cart:", newItem);
 
     // Check if item already exists
     const existingItemIndex = items.findIndex(item => item.id === newItem.id);
 
     if (existingItemIndex >= 0) {
-      // Update existing item
+      // Update existing item quantity (simple increment for now)
       const updatedItems = [...items];
       updatedItems[existingItemIndex].quantity += 1;
+      console.log(`Updated quantity for item ${newItem.id} to ${updatedItems[existingItemIndex].quantity}`);
       setItems(updatedItems);
     } else {
       // Add new item
+      console.log(`Adding new item ${newItem.id} to cart.`);
       setItems(prevItems => [...prevItems, newItem]);
     }
-  };
+  }, [items]);
 
   // Remove item from cart
-  const removeItem = (id: string) => {
+  const removeItem = useCallback((id: string) => {
     setItems(prevItems => prevItems.filter(item => item.id !== id));
-  };
+  }, []);
 
   // Update item quantity
-  const updateQuantity = (id: string, quantity: number) => {
+  const updateQuantity = useCallback((id: string, quantity: number) => {
     if (quantity < 1) return;
     
     setItems(prevItems => 
@@ -131,12 +146,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
         item.id === id ? { ...item, quantity } : item
       )
     );
-  };
+  }, []);
 
   // Clear cart
-  const clearCart = () => {
+  const clearCart = useCallback(() => {
     setItems([]);
-  };
+  }, []);
 
   // Calculate total items
   const totalItems = items.reduce((total, item) => total + item.quantity, 0);
@@ -144,9 +159,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   // Calculate subtotal price (before shipping)
   const subtotalPrice = items.reduce((total, item) => total + (item.price * item.quantity), 0);
 
-  // Calculate shipping cost ($20/kg)
-  const shippingCost = items.reduce((total, item) => 
-    total + (item.weightInKg * item.quantity * 20), 0);
+  // Calculate shipping cost ($10 base + $20/kg)
+  const baseShippingFee = items.length > 0 ? 10 : 0; // Add $10 base fee if cart is not empty
+  const weightBasedShippingCost = items.reduce((total, item) => 
+    total + (item.weightInKg * item.quantity * 20), // $20 per kg
+  0);
+  const shippingCost = baseShippingFee + weightBasedShippingCost;
 
   // Calculate total price (including shipping)
   const totalPrice = subtotalPrice + shippingCost;
@@ -162,7 +180,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
         totalItems,
         totalPrice,
         subtotalPrice,
-        shippingCost
+        shippingCost,
+        isInitialized
       }}
     >
       {children}

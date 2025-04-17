@@ -31,3 +31,23 @@
 #     if not processor_class:
 #         raise NotImplementedError(f"No processor for {process_type}")
 #     return processor_class(markup=markup) # Pass markup
+
+# Expose key submodules
+from . import print_3d
+from . import cnc
+# from . import sheet_metal # Uncomment when available
+
+# Import commonly-used items from submodules for convenience
+from .print_3d import Print3DProcessor
+from .cnc import CncProcessor
+# from .sheet_metal import SheetMetalProcessor # Uncomment when available
+
+# Define what gets imported with 'from quote_system.processes import *'
+__all__ = [
+    "print_3d",
+    "cnc",
+    # "sheet_metal",  # Uncomment when available
+    "Print3DProcessor",
+    "CncProcessor",
+    # "SheetMetalProcessor",  # Uncomment when available
+]

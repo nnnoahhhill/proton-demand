@@ -1,34 +1,37 @@
 # processes/base_processor.py
 
-import abc
-import time
-import json
 import os
+import time
 import logging
+import json
+import abc
+import trimesh  # For base validation
+from typing import List, Dict, Any, Optional, Tuple, cast
 import math
-from typing import List, Dict, Optional, Any
 
-import trimesh
-
-# Fix imports to use fully qualified paths
-# IMPORTANT: Using absolute imports here to avoid namespace issues with testing
-from quote_system.core.common_types import (
+# Change to relative imports
+from ..core.common_types import (
+    QuoteResult,
+    DFMReport, 
+    DFMIssue,
+    DFMStatus,
+    DFMLevel,
+    DFMIssueType,
     ManufacturingProcess,
     MaterialInfo,
     MeshProperties,
-    DFMReport,
-    CostEstimate,
-    QuoteResult,
-    DFMStatus,     
-    DFMIssue,     
-    DFMIssueType, 
-    DFMLevel       
+    CostEstimate
 )
-from quote_system.core.exceptions import (
-    MaterialNotFoundError, ConfigurationError,
-    FileFormatError, GeometryProcessingError
+from ..core.exceptions import (
+    MaterialNotFoundError, 
+    FileFormatError, 
+    GeometryProcessingError, 
+    ConfigurationError, 
+    SlicerError, # If base class needs to potentially catch it
+    ManufacturingQuoteError # General custom error
 )
-from quote_system.core import geometry, utils # Import necessary core modules
+from ..core import geometry, utils # Import necessary core modules
+from ..config import settings # Import settings
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +178,20 @@ class BaseProcessor(abc.ABC):
         total_start_time = time.time()
         logger.info(f"Generating quote for: {os.path.basename(file_path)}, Material: {material_id}, Process: {self.process_type.value}")
 
+        # Initialize quote_result BEFORE the main try block
+        quote_result = QuoteResult(
+            file_name=os.path.basename(file_path),
+            process=self.process_type,
+            # Remaining fields will be populated or remain None
+            material_info=None, 
+            dfm_report=None, 
+            cost_estimate=None,
+            customer_price=None,
+            estimated_process_time_str=None,
+            processing_time_sec=-1, # Will be updated in finally
+            error_message=None
+        )
+
         mesh = None
         mesh_properties = None
         dfm_report = None
@@ -198,60 +215,73 @@ class BaseProcessor(abc.ABC):
             logger.info(f"Using material: {material_info.name}")
 
             # Perform basic Design For Manufacturing checks
+            dfm_start_time = time.time()
             dfm_report = self.run_dfm_checks(mesh, mesh_properties, material_info)
-            
+            dfm_report.analysis_time_sec = time.time() - dfm_start_time
+            quote_result.dfm_report = dfm_report # Store DFM report regardless of status
+            logger.info(f"DFM analysis complete. Status: {dfm_report.status}, Time: {dfm_report.analysis_time_sec:.2f}s")
+            # Log DFM issues if any
             if dfm_report.status != DFMStatus.PASS:
-                logger.info(f"DFM check failed with status {dfm_report.status} and {len(dfm_report.issues)} issues.")
-                error_message = "Design failed manufacturability checks. See DFM report for details."
-                cost_estimate = None
-                customer_price = None
-                estimated_process_time_str = None
-            else:
-                # If DFM checks pass, generate pricing
-                logger.info("DFM check passed, generating cost estimate")
-                cost_estimate = self.calculate_cost_and_time(mesh, mesh_properties, material_info)
-                
-                # Apply markup for final customer pricing - Fix rounding issue
-                # Ensure we don't round down below the minimum expected markup
-                raw_price = cost_estimate.base_cost * self.markup
-                customer_price = math.ceil(raw_price * 100) / 100  # Round up to nearest cent
-                
-                # Format processing time for display
-                estimated_process_time_str = utils.format_time(cost_estimate.process_time_seconds)
-                
-                error_message = None
-                
-                logger.info(f"Estimated cost: ${cost_estimate.base_cost:.2f}, Customer price: ${customer_price:.2f}")
+                for issue in dfm_report.issues:
+                    logger.warning(f"  - DFM Issue [{issue.level} - {issue.issue_type}]: {issue.message} {issue.details or ''}")
 
+            # Always attempt Cost & Time Estimation, regardless of DFM status
+            logger.info(f"Proceeding with cost/time estimation (DFM Status was: {dfm_report.status})...")
+            cost_start_time = time.time()
+            # This might raise exceptions (SlicerError, ConfigError etc.) if issues occur here
+            cost_estimate = self.calculate_cost_and_time(mesh, mesh_properties, material_info)
+            cost_estimate.cost_analysis_time_sec = time.time() - cost_start_time
+            quote_result.cost_estimate = cost_estimate
+            
+            # Calculate marked-up price (Base Cost * Markup)
+            markup_price = cost_estimate.base_cost * self.markup
 
-        except (MaterialNotFoundError, FileNotFoundError, FileFormatError, GeometryProcessingError, ConfigurationError) as e:
-            logger.error(f"Quote generation failed early for {os.path.basename(file_path)}: {e}", exc_info=False) # Log full trace only if debugging needed
-            # Create a minimal DFM report indicating the failure
-            dfm_report = DFMReport(
-                status=DFMStatus.FAIL,
-                issues=[DFMIssue(
-                    issue_type=DFMIssueType.FILE_VALIDATION if isinstance(e, (FileNotFoundError, FileFormatError)) else DFMIssueType.GEOMETRY_ERROR,
-                    level=DFMLevel.CRITICAL,
-                    message=f"Preprocessing failed: {str(e)}",
-                    recommendation="Please check the input file path, format, and integrity."
-                )],
-                analysis_time_sec=0 # DFM didn't run
-            )
-            error_message = f"Quote failed: {str(e)}"
+            # Calculate time-based cost
+            time_cost = (cost_estimate.process_time_seconds / 3600) * settings.print_time_cost_per_hour
+
+            # Final customer price = Marked-up Price + Time Cost
+            final_customer_price = markup_price + time_cost
+            
+            # Round up to nearest cent
+            customer_price = math.ceil(final_customer_price * 100) / 100  
+            quote_result.customer_price = customer_price
+            
+            # Format estimated time
+            estimated_process_time_str = utils.format_time(cost_estimate.process_time_seconds)
+            quote_result.estimated_process_time_str = estimated_process_time_str
+            
+            logger.info(f"Cost/Time estimation complete. Base Cost: {cost_estimate.base_cost:.2f}, Markup Price: {markup_price:.2f}, Time Cost: {time_cost:.2f}, Final Price: {customer_price:.2f}, Time: {estimated_process_time_str}, Analysis Time: {cost_estimate.cost_analysis_time_sec:.2f}s")
+            error_message = None # Clear any potential previous error message if costing succeeded
+            quote_result.error_message = None # Explicitly clear error on success path
+            # Set success flag to True since price was calculated
+            quote_result.success = True
+
+        # --- Exception Handling Block Starts Here --- 
+        except (MaterialNotFoundError, FileNotFoundError, FileFormatError, GeometryProcessingError, ConfigurationError, SlicerError, ManufacturingQuoteError) as e:
+            logger.error(f"Quote generation failed for {os.path.basename(file_path)} due to: {e}", exc_info=True) # Log full trace for operational errors
+            # Populate error message in the result
+            error_message = f"{type(e).__name__}: {str(e)}"
+            quote_result.error_message = error_message
+            # Ensure DFM report is populated if error occurred after DFM
+            if quote_result.dfm_report is None: 
+                 quote_result.dfm_report = DFMReport(status=DFMStatus.FAIL, issues=[DFMIssue(issue_type=DFMIssueType.FILE_VALIDATION if isinstance(e, (FileNotFoundError, FileFormatError)) else DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.CRITICAL, message=str(e))], analysis_time_sec=0)
+            elif quote_result.dfm_report.status != DFMStatus.FAIL:
+                # Add the exception as a critical DFM issue if it happened after DFM
+                quote_result.dfm_report.status = DFMStatus.FAIL
+                quote_result.dfm_report.issues.append(DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.CRITICAL, message=f"Processing Error: {str(e)}"))
+                
         except Exception as e:
-             logger.exception(f"Unexpected error during quote generation for {os.path.basename(file_path)}:") # Log full trace for unexpected errors
-             dfm_report = DFMReport(
-                status=DFMStatus.FAIL,
-                issues=[DFMIssue(
-                    issue_type=DFMIssueType.GEOMETRY_ERROR, # Generic error type
-                    level=DFMLevel.CRITICAL,
-                    message=f"An unexpected error occurred: {str(e)}",
-                    recommendation="Please contact support or try again."
-                )],
-                analysis_time_sec=0
-             )
-             error_message = f"Quote failed due to an unexpected error: {str(e)}"
-
+            # Catch any other unexpected errors
+            logger.exception(f"Unexpected error during quote generation for {os.path.basename(file_path)}:")
+            error_message = f"Unexpected Internal Error: {str(e)}"
+            quote_result.error_message = error_message
+            # Ensure DFM report reflects failure
+            if quote_result.dfm_report is None:
+                 quote_result.dfm_report = DFMReport(status=DFMStatus.FAIL, issues=[DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.CRITICAL, message="Unexpected internal error during processing.")], analysis_time_sec=0)
+            else:
+                quote_result.dfm_report.status = DFMStatus.FAIL
+                if not any(iss.message.startswith("Unexpected Internal Error") for iss in quote_result.dfm_report.issues):
+                    quote_result.dfm_report.issues.append(DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.CRITICAL, message=f"Unexpected Internal Error: {str(e)}"))
 
         total_processing_time = time.time() - total_start_time
         logger.info(f"Quote generation finished in {total_processing_time:.3f} seconds. Status: {dfm_report.status if dfm_report else 'Error'}")
@@ -282,19 +312,13 @@ class BaseProcessor(abc.ABC):
              except Exception: # If even creating dummy fails (e.g., bad process type)
                   material_info = MaterialInfo(id="unknown", name="Unknown", process=self.process_type, density_g_cm3=0)
 
+        quote_result.material_info = material_info
+        quote_result.dfm_report = dfm_report
+        quote_result.cost_estimate = cost_estimate
+        quote_result.customer_price = customer_price
+        quote_result.estimated_process_time_str = estimated_process_time_str if cost_estimate else None
+        quote_result.processing_time_sec = total_processing_time
+        quote_result.error_message = error_message
 
-        # Create QuoteResult object without converting to dictionaries
-        result = QuoteResult(
-            file_name=os.path.basename(file_path),
-            process=self.process_type,
-            technology=material_info.technology, # Get technology from the loaded material info
-            material_info=material_info,
-            dfm_report=dfm_report,
-            cost_estimate=cost_estimate, # Will be None if DFM failed
-            customer_price=customer_price, # Will be None if DFM failed
-            estimated_process_time_str=estimated_process_time_str if cost_estimate else None,
-            processing_time_sec=total_processing_time,
-            error_message=error_message
-        )
-        # Return the QuoteResult instance
-        return result 
+        # Return the QuoteResult instance that was initialized earlier
+        return quote_result 

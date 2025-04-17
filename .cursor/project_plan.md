@@ -42,6 +42,15 @@ This project aims to create a seamless web application where users can upload 3D
   - [ ] Ensure proper handling of file upload + manufacturing options
   - [ ] Format response for easy frontend consumption
 
+- [ ] **Backend Refactoring (per Upgrade Plan)** (done)
+  - [x] Clean up old directory structure (`src/`, `api/`, `services/`)
+  - [x] Create `config.py` in `backend/quote_system/`
+  - [x] Create `main_api.py` in `backend/quote_system/`
+  - [x] Create `main_cli.py` in `backend/quote_system/`
+  - [x] Create `testing/` directory and contents (`conftest.py`, `generate_test_models.py`, `test_3d_print_dfm.py`, `test_3d_print_quote.py`, `test_cnc.py`)
+  - [x] Create `visualization/` directory and `viewer.py`
+  - [x] Move `requirements.txt` to `backend/quote_system/`
+
 - [ ] **Order Processing System** (not started)
   - [ ] Implement order number generation
   - [ ] Create order database storage

@@ -2,12 +2,9 @@
 
 # This file makes the 'print_3d' directory a Python sub-package.
 
-# from .processor import Print3DProcessor
-from quote_system.processes.print_3d.processor import Print3DProcessor
-# from .slicer import SlicerResult
-from quote_system.processes.print_3d.slicer import SlicerResult
-# from .dfm_rules import (
-from quote_system.processes.print_3d.dfm_rules import (
+from .processor import Print3DProcessor
+from .slicer import SlicerResult
+from .dfm_rules import (
     check_bounding_box,
     check_mesh_integrity,
     check_thin_walls,

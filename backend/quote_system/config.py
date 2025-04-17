@@ -1,25 +1,31 @@
 # config.py
 
 import logging
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, validator, Extra
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Get the absolute path to the directory containing this file (quote_system)
+QUOTE_SYSTEM_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE_PATH = os.path.join(QUOTE_SYSTEM_DIR, '.env')
+
 class Settings(BaseSettings):
     """
     Application configuration settings loaded from environment variables and .env file.
     """
-    # Allow loading from a .env file
+    # Allow loading from a .env file with explicit path
     model_config = SettingsConfigDict(
-        env_file='.env',
+        env_file=ENV_FILE_PATH,
         env_file_encoding='utf-8',
         extra='ignore' # Ignore extra fields from environment/dotenv
     )
 
     # Pricing Configuration
-    markup_factor: float = Field(1.5, env="MARKUP_FACTOR", description="Multiplier for base cost to get customer price (>= 1.0)")
+    markup_factor: float = 2.0
+    print_time_cost_per_hour: float = 5.0
 
     # External Tool Paths
     # If None, the slicer module will attempt auto-detection.
@@ -39,6 +45,8 @@ class Settings(BaseSettings):
 
     # Slack Configuration
     slack_webhook_url: Optional[str] = Field(None, env="SLACK_WEBHOOK_URL")
+    slack_bot_token: Optional[str] = Field(None, env="SLACK_BOT_TOKEN")
+    slack_upload_channel_id: Optional[str] = Field(None, env="SLACK_UPLOAD_CHANNEL_ID")
 
     # Frontend URL (for redirects)
     frontend_url: str = Field("http://localhost:3000", env="FRONTEND_URL")

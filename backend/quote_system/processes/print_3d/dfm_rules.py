@@ -8,11 +8,11 @@ import numpy as np
 import trimesh
 import pymeshlab
 
-# Use absolute imports relative to project root
-from core.common_types import (
+# Fix imports to use relative paths
+from ...core.common_types import (
     DFMIssue, DFMLevel, DFMIssueType, MeshProperties, MaterialInfo, Print3DTechnology
 )
-from core.exceptions import DFMCheckError
+from ...core.exceptions import DFMCheckError
 
 logger = logging.getLogger(__name__)
 
@@ -86,32 +86,59 @@ def check_mesh_integrity(ms: pymeshlab.MeshSet, mesh: trimesh.Trimesh, mesh_prop
                  issues.append(DFMIssue(issue_type=DFMIssueType.NON_MANIFOLD, level=DFMLevel.ERROR, message=f"Holes ({boundary_edges} boundary edges) found by PyMeshLab.", recommendation="Use repair tools to close holes."))
         except Exception as e: logger.error(f"PyMeshLab topo measures error: {e}", exc_info=True); issues.append(DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.ERROR, message=f"Non-manifold check error (PyMeshLab): {e}", recommendation="Check manually."))
 
-    # Multiple Shells Check - Run PyMeshLab splitting, but IGNORE result if Trimesh said watertight
-    # --- FIX: Rework shell check logic to ignore split if trimesh.is_watertight --- 
-    logger.debug("Performing PyMeshLab split check for multiple shells...")
+    # --- Multiple Shells Check --- 
+    # Prioritize Trimesh split, as it might be more robust for edge cases
+    trimesh_shell_count = -1
     try:
-        temp_ms_split = pymeshlab.MeshSet()
-        try:
-            current_ml_mesh = ms.current_mesh()
-            if not current_ml_mesh: raise DFMCheckError("Cannot get current mesh for split check.")
-            temp_ms_split.add_mesh(pymeshlab.Mesh(current_ml_mesh.vertex_matrix(), current_ml_mesh.face_matrix()), "mesh_copy_for_split")
-            temp_ms_split.meshing_remove_duplicate_vertices()
-            temp_ms_split.meshing_remove_duplicate_faces()
-            temp_ms_split.generate_splitting_by_connected_components()
-            split_shell_count = temp_ms_split.mesh_number()
-            logger.info(f"Shell count after splitting verification: {split_shell_count}")
-            # ONLY add issue if Trimesh reported NOT watertight AND split found multiple shells
-            if not mesh.is_watertight and split_shell_count > CONFIG["max_shells_allowed"]:
-                issues.append(DFMIssue(issue_type=DFMIssueType.MULTIPLE_SHELLS, level=DFMLevel.CRITICAL, message=f"Model is not watertight AND contains {split_shell_count} shells (found by splitting). Only {CONFIG['max_shells_allowed']} allowed.", recommendation="Combine parts or ensure connection."))
-            elif mesh.is_watertight and split_shell_count > CONFIG["max_shells_allowed"]:
-                logger.warning(f"PyMeshLab split found {split_shell_count} shells, but Trimesh reported watertight. Ignoring shell count issue.")
-                # Do NOT add an issue in this case
-        finally:
-            del temp_ms_split # Manual cleanup
+        # Use only_watertight=False to count all visually separate components
+        split_meshes = mesh.split(only_watertight=False)
+        trimesh_shell_count = len(split_meshes)
+        logger.info(f"Shell count according to trimesh.split: {trimesh_shell_count}")
+        if trimesh_shell_count > CONFIG["max_shells_allowed"]:
+            # If Trimesh finds multiple shells, add a warning based on its count
+            issues.append(DFMIssue(issue_type=DFMIssueType.MULTIPLE_SHELLS, 
+                                   level=DFMLevel.WARN, 
+                                   message=f"Model contains {trimesh_shell_count} shells (found by Trimesh split). Only {CONFIG['max_shells_allowed']} expected.", 
+                                   recommendation="Verify if intentional. Ensure model is a single solid body.",
+                                   details={"shell_count_trimesh": trimesh_shell_count}))
+            logger.warning(f"Multiple shells detected by Trimesh ({trimesh_shell_count}), treating as WARNING.")
+            # If Trimesh already found multiple, no need to rely on PyMeshLab's potentially more sensitive check
+            # Skip the PyMeshLab split check below
+
     except Exception as e:
-        logger.error(f"Shell splitting check failed: {e}", exc_info=True)
-        issues.append(DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.WARN, message=f"Shell count check failed: {e}", recommendation="Manually verify single part."))
-    # --- END FIX ---
+        logger.error(f"Trimesh shell splitting check failed: {e}", exc_info=True)
+        issues.append(DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.WARN, message=f"Trimesh shell count check failed: {e}", recommendation="Manually verify single part."))
+
+    # Run PyMeshLab split check ONLY if Trimesh reported a single shell (or failed)
+    if trimesh_shell_count <= CONFIG["max_shells_allowed"]:
+        logger.debug("Performing PyMeshLab split check for multiple shells (as Trimesh found <= 1)...")
+        try:
+            temp_ms_split = pymeshlab.MeshSet()
+            try:
+                current_ml_mesh = ms.current_mesh()
+                if not current_ml_mesh: raise DFMCheckError("Cannot get current mesh for split check.")
+                temp_ms_split.add_mesh(pymeshlab.Mesh(current_ml_mesh.vertex_matrix(), current_ml_mesh.face_matrix()), "mesh_copy_for_split")
+                # Maybe skip these preprocessing steps if they cause issues?
+                # temp_ms_split.meshing_remove_duplicate_vertices()
+                # temp_ms_split.meshing_remove_duplicate_faces()
+                temp_ms_split.generate_splitting_by_connected_components()
+                split_shell_count_pymeshlab = temp_ms_split.mesh_number()
+                logger.info(f"Shell count after PyMeshLab splitting verification: {split_shell_count_pymeshlab}")
+                
+                # Add warning only if PyMeshLab count differs significantly from Trimesh count (which was 1)
+                if split_shell_count_pymeshlab > CONFIG["max_shells_allowed"]:
+                    issues.append(DFMIssue(issue_type=DFMIssueType.MULTIPLE_SHELLS, 
+                                           level=DFMLevel.WARN, # Keep as WARN 
+                                           message=f"PyMeshLab split resulted in {split_shell_count_pymeshlab} shells (Trimesh found {trimesh_shell_count}). Verify model connectivity.", 
+                                           recommendation="Check for micro-gaps or very small non-manifold areas if unexpected.",
+                                           details={"shell_count_pymeshlab": split_shell_count_pymeshlab, "shell_count_trimesh": trimesh_shell_count}))
+                    logger.warning(f"Multiple shells detected by PyMeshLab ({split_shell_count_pymeshlab}) but not Trimesh ({trimesh_shell_count}), treating as WARNING.")
+            finally:
+                del temp_ms_split # Manual cleanup
+        except Exception as e:
+            logger.error(f"PyMeshLab Shell splitting check failed: {e}", exc_info=True)
+            # Don't add another issue if Trimesh already found <= 1 shell
+            # issues.append(DFMIssue(issue_type=DFMIssueType.GEOMETRY_ERROR, level=DFMLevel.WARN, message=f"PyMeshLab shell count check failed: {e}", recommendation="Manually verify single part."))
 
     logger.debug(f"Mesh integrity checks done in {time.time() - start_time:.3f}s")
     return issues

@@ -120,12 +120,13 @@ class CostEstimate(BaseModel):
 
 class QuoteResult(BaseModel):
     """Final quote result including DFM, cost, and time estimates."""
+    success: bool = Field(False, description="Indicates if quote generation (including price) was successful, even with DFM warnings.")
     quote_id: str = Field(default_factory=lambda: f"Q-{int(time.time()*1000)}", description="Unique identifier for this quote request.")
     file_name: str = Field(..., description="Original filename of the uploaded model.")
     process: ManufacturingProcess = Field(..., description="Selected manufacturing process.")
     technology: Optional[str] = Field(None, description="Specific technology used.")
-    material_info: MaterialInfo = Field(..., description="Details of the selected material.")
-    dfm_report: DFMReport = Field(..., description="Results of the Design for Manufacturing analysis.")
+    material_info: Optional[MaterialInfo] = Field(None, description="Details of the selected material.")
+    dfm_report: Optional[DFMReport] = Field(None, description="Results of the Design for Manufacturing analysis.")
     cost_estimate: Optional[CostEstimate] = Field(None, description="Cost breakdown (only present if DFM status is not FAIL).")
     customer_price: Optional[float] = Field(None, description="Final price to the customer including markup (only present if DFM status is not FAIL).")
     estimated_process_time_str: Optional[str] = Field(None, description="Human-readable estimated process time (e.g., '2h 30m').")
