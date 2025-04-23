@@ -401,20 +401,41 @@ async def create_checkout_session_endpoint(request_data: CheckoutSessionRequest)
         unit_amount_cents = int(request_data.price * 100)
         if unit_amount_cents <= 0:
             raise HTTPException(status_code=400, detail="Price must be positive.")
+            
+        # Check if shipping cost was provided
+        shipping_cost = getattr(request_data, 'shipping_cost', None)
+        
+        # Create line items array, starting with the product
+        line_items = [
+            {
+                'price_data': {
+                    'currency': request_data.currency.lower(),
+                    'product_data': {
+                        'name': request_data.item_name,
+                    },
+                    'unit_amount': unit_amount_cents,
+                },
+                'quantity': request_data.quantity,
+            },
+        ]
+        
+        # Add shipping as a separate line item if provided
+        if shipping_cost and shipping_cost > 0:
+            shipping_amount_cents = int(shipping_cost * 100)
+            line_items.append({
+                'price_data': {
+                    'currency': request_data.currency.lower(),
+                    'product_data': {
+                        'name': 'Shipping & Handling',
+                    },
+                    'unit_amount': shipping_amount_cents,
+                },
+                'quantity': 1,
+            })
+            logger.info(f"Adding shipping cost: ${shipping_cost:.2f} to checkout session")
 
         checkout_session = stripe.checkout.Session.create(
-            line_items=[
-                {
-                    'price_data': {
-                        'currency': request_data.currency.lower(),
-                        'product_data': {
-                            'name': request_data.item_name,
-                        },
-                        'unit_amount': unit_amount_cents,
-                    },
-                    'quantity': request_data.quantity,
-                },
-            ],
+            line_items=line_items,
             mode='payment',
             # Collect shipping address
             shipping_address_collection={
@@ -425,7 +446,9 @@ async def create_checkout_session_endpoint(request_data: CheckoutSessionRequest)
             metadata={
                 'quote_id': request_data.quote_id if request_data.quote_id else 'N/A',
                 # Add file_name to metadata
-                'file_name': request_data.file_name if request_data.file_name else 'N/A' 
+                'file_name': request_data.file_name if request_data.file_name else 'N/A',
+                # Add shipping cost to metadata
+                'shipping_cost': str(shipping_cost) if shipping_cost else '0' 
             }
         )
 

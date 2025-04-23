@@ -19,6 +19,55 @@ export default function CartPage() {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
 
+  // Calculate total
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  
+  // Calculate shipping based on item weights - this is now just for logging
+  const calculateShipping = () => {
+    if (!items || items.length === 0) return 0;
+    
+    // Log shipping calculation start
+    console.log(`\n
+💲 CALCULATING SHIPPING COSTS (FOR DEBUGGING) 💲
+Cart has ${items.length} items
+`);
+    
+    // Add $10 base fee if cart is not empty
+    const baseShippingFee = 10;
+    
+    // Calculate weight-based shipping
+    const weightBasedShippingCost = items.reduce((total, item) => {
+      if (!item) return total;
+      
+      // Get weight in kg
+      const weightInKg = item.weightInKg || 0.1; // Default to 100g
+      
+      // Log each item's shipping contribution
+      console.log(`Item: ${item.fileName}, Weight: ${weightInKg.toFixed(3)}kg, Quantity: ${item.quantity}, Shipping Contribution: $${(weightInKg * item.quantity * 20).toFixed(2)}`);
+      
+      // $20/kg shipping
+      return total + (weightInKg * item.quantity * 20);
+    }, 0);
+    
+    // Minimum $5 shipping overall
+    return Math.max(5, baseShippingFee + weightBasedShippingCost);
+  };
+  
+  // Calculate locally just for comparison/debugging
+  const localShipping = calculateShipping();
+  
+  // Actually USE the shipping cost from cart context for consistency
+  const shipping = shippingCost;
+  
+  // Log comparison for debugging
+  console.log(`\n
+🚚 SHIPPING COST COMPARISON 🚚
+Local calculation (page.tsx): $${localShipping.toFixed(2)}
+Cart context calculation: $${shipping.toFixed(2)} (USED)
+`);
+  
+  const total = subtotal + shipping;
+
   const handleProceedToCheckout = async () => {
     if (!items || items.length === 0 || !stripePromise) {
       console.error('Checkout prerequisites not met:', { items, stripePromise });
@@ -32,29 +81,77 @@ export default function CartPage() {
 
     setIsCheckingOut(true);
     setCheckoutError('');
-
-    // For simplicity, we'll checkout the first item only for now.
-    // TODO: Modify backend to handle multiple items or iterate here.
-    const firstItem = items[0];
-
+    
     try {
+      // CRITICAL TERMINAL LOGGING - Print all values to terminal
+      console.log('\n===== CRITICAL CHECKOUT VALUES =====');
+      console.log('CART ITEMS COUNT:', items.length);
+      console.log('SUBTOTAL:', subtotal.toFixed(2));
+      console.log('SHIPPING:', shipping.toFixed(2));
+      console.log('TOTAL (SUBTOTAL + SHIPPING):', (subtotal + shipping).toFixed(2));
+      
+      // Log individual items for debugging
+      if (items.length > 0) {
+        console.log('\n----- Item Details -----');
+        items.forEach((item, index) => {
+          console.log(`ITEM ${index + 1}: ${item.fileName}`);
+          console.log(`  Price: $${item.price.toFixed(2)}`);
+          console.log(`  Quantity: ${item.quantity}`);
+          console.log(`  Weight: ${item.weightInKg.toFixed(3)}kg`);
+          console.log(`  Total Item Price: $${(item.price * item.quantity).toFixed(2)}`);
+          console.log(`  Shipping Contribution: $${(item.weightInKg * item.quantity * 20).toFixed(2)}`);
+        });
+      }
+      
+      // Create a descriptive name for the order including total price with shipping
+      const formattedTotal = (subtotal + shipping).toFixed(2);
+      const orderName = items.length === 1
+        ? `Quote ${items[0].id.substring(0, 8)} - ${items[0].fileName} - $${formattedTotal}`
+        : `Order with ${items.length} items - Total $${formattedTotal} (incl. $${shipping.toFixed(2)} shipping)`;
+      
+      // Format items for the API
+      const checkoutItems = items.map(item => ({
+        id: item.id,
+        name: item.fileName,
+        price: item.price,
+        quantity: item.quantity,
+        description: `${item.process} - ${item.material}`
+      }));
+      
+      // Use the shipping value from cart context
+      const finalShippingCost = shipping;
+      
+      console.log('\n===== CHECKOUT SUMMARY =====');
+      console.log('ORDER NAME:', orderName);
+      console.log('ITEMS:', checkoutItems.length);
+      console.log('SUBTOTAL:', subtotal.toFixed(2));
+      console.log('SHIPPING:', finalShippingCost.toFixed(2));
+      console.log('TOTAL:', (subtotal + finalShippingCost).toFixed(2));
+      
+      // Create checkout session
       const checkoutResponse = await createCheckoutSession({
-        // Using the first item's details
-        item_name: `Quote ${firstItem.id.substring(0, 8)} - ${firstItem.fileName}`,
-        price: firstItem.price, // Price per unit
-        currency: firstItem.currency || 'usd',
-        quantity: firstItem.quantity,
-        quote_id: firstItem.id,
-        file_name: firstItem.fileName
+        item_name: orderName,
+        price: subtotal + finalShippingCost,  // Total price without shipping
+        currency: items[0].currency || 'usd',
+        // Use the new items array parameter
+        items: checkoutItems,
+        // Add fallback quote_id and file_name for backward compatibility with the backend
+        quote_id: items.length === 1 ? items[0].id : items.map(item => item.id).join(','),
+        file_name: items.length === 1 ? items[0].fileName : 'Multiple Files',
+        shipping_cost: finalShippingCost // Use the shipping cost displayed in the UI
       });
+      
+      // Log response success/failure
+      console.log('CHECKOUT API:', checkoutResponse.error ? 'ERROR' : 'SUCCESS');
 
       if (checkoutResponse.error || !checkoutResponse.sessionId) {
-        console.error("Failed to create checkout session:", checkoutResponse.error);
-        setCheckoutError(checkoutResponse.error || 'Failed to initiate payment session. Backend endpoint might be missing or returning an error.');
+        const errorMsg = checkoutResponse.error || 'Failed to initiate payment session. Please try again.';
+        console.error("Checkout session creation failed:", errorMsg);
+        setCheckoutError(errorMsg);
         setIsCheckingOut(false);
         return;
       }
-
+      
       const stripe = await stripePromise;
       if (!stripe) {
         console.error('Stripe.js failed to load.');
@@ -62,6 +159,8 @@ export default function CartPage() {
         setIsCheckingOut(false);
         return;
       }
+      
+      console.log("Redirecting to Stripe checkout...");
 
       const { error } = await stripe.redirectToCheckout({
         sessionId: checkoutResponse.sessionId,
@@ -69,12 +168,25 @@ export default function CartPage() {
 
       if (error) {
         console.error('Stripe redirect error:', error);
-        setCheckoutError(error.message || 'Failed to redirect to payment page.');
-        // Don't set isCheckingOut to false if redirect fails, user might retry
+        // Provide a more descriptive error message based on the error type
+        const errorMessage = error.message || 'Failed to redirect to payment page.';
+        setCheckoutError(errorMessage);
+        setIsCheckingOut(false);
       }
     } catch (err) {
       console.error('Error during checkout process:', err);
-      setCheckoutError(err instanceof Error ? err.message : 'An unknown error occurred during checkout.');
+      // Provide more specific error messages based on the error type
+      let errorMessage = 'An unknown error occurred during checkout.';
+      
+      if (err instanceof Error) {
+        errorMessage = err.message;
+        // Handle network errors specifically
+        if (err.message.includes('network') || err.message.includes('fetch')) {
+          errorMessage = 'Network error. Please check your internet connection and try again.';
+        }
+      }
+      
+      setCheckoutError(errorMessage);
       setIsCheckingOut(false);
     }
   };
@@ -165,16 +277,16 @@ export default function CartPage() {
           <div className="space-y-3 mb-6">
             <div className="flex justify-between">
               <span>Subtotal ({totalItems} items)</span>
-              <span>${subtotalPrice.toFixed(2)}</span>
+              <span>${subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
-              <span>Est. Shipping</span>
-              <span>${shippingCost.toFixed(2)}</span>
+              <span>Shipping</span>
+              <span>${shipping.toFixed(2)}</span>
             </div>
             <hr className="border-t border-[#1E2A45] my-2" />
             <div className="flex justify-between font-bold text-xl">
               <span>Total</span>
-              <span>${totalPrice.toFixed(2)}</span>
+              <span>${total.toFixed(2)}</span>
             </div>
           </div>
           <GlowButton

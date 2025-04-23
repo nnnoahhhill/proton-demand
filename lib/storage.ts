@@ -140,7 +140,8 @@ export async function saveModelFileToFilesystem(
   fileName: string,
   quoteId: string,
   orderNumber?: string,
-  partName?: string
+  partName?: string,
+  metadata?: Record<string, string>
 ): Promise<ModelFile | null> {
   try {
     console.log(`DEBUG: saveModelFileToFilesystem called - fileName: ${fileName}, quoteId: ${quoteId}`);
@@ -184,6 +185,30 @@ export async function saveModelFileToFilesystem(
       console.log(`DEBUG: Writing file to disk: ${storedFilePath}`);
       await writeFile(storedFilePath, fileBuffer);
       console.log(`DEBUG: File written successfully`);
+      
+      // If FFF configuration or other metadata is provided, save it
+      if (metadata && Object.keys(metadata).length > 0) {
+        // Save metadata in a corresponding JSON file
+        const metadataFileName = `${storedFileName}.metadata.json`;
+        const metadataFilePath = path.join(MODELS_DIR, metadataFileName);
+        
+        console.log(`DEBUG: Saving metadata to: ${metadataFilePath}`);
+        
+        // Create the metadata file
+        const metadataContent = {
+          ...metadata,
+          fileName,
+          quoteId,
+          orderNumber: orderNumber || '',
+          partName: partName || '',
+          timestamp,
+          fileSize: fileBuffer.length,
+          fileType: fileExtension,
+        };
+        
+        await writeFile(metadataFilePath, JSON.stringify(metadataContent, null, 2));
+        console.log(`DEBUG: Metadata saved successfully`);
+      }
     } catch (writeError) {
       console.error(`DEBUG: Error writing file to disk:`, writeError);
       if (writeError instanceof Error) {
@@ -208,7 +233,8 @@ export async function saveModelFileToFilesystem(
       metadata: {
         originalName: fileName,
         quoteId: quoteId,
-        timestamp: timestamp
+        timestamp: timestamp,
+        ...metadata // Include any additional metadata passed in
       },
     };
 

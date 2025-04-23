@@ -12,6 +12,7 @@ interface CheckoutFormProps {
   onPaymentSuccess: (paymentIntentId: string) => void;
   onPaymentError: (errorMessage: string) => void;
   onLoadingChange: (isLoading: boolean) => void;
+  shippingCost: number;
 }
 
 const cardElementOptions = {
@@ -37,7 +38,8 @@ export default function CheckoutForm({
   totalAmount, 
   onPaymentSuccess, 
   onPaymentError, 
-  onLoadingChange
+  onLoadingChange,
+  shippingCost
 }: CheckoutFormProps) {
   const stripe = useStripe();
   const elements = useElements();
@@ -83,6 +85,16 @@ export default function CheckoutForm({
         price: item.price 
       }));
 
+      // Add shipping as a separate item
+      if (shippingCost > 0) {
+        orderItems.push({
+          id: 'shipping',
+          name: 'Shipping & Handling',
+          quantity: 1,
+          price: shippingCost
+        });
+      }
+      
       // Collect quote IDs from cart items
       const quoteIds = items.map(item => item.id).filter(Boolean);
       
@@ -117,6 +129,9 @@ export default function CheckoutForm({
             technology: technology,
             material: material,
             quantity: String(firstItem.quantity || 1),
+            
+            // Add shipping cost metadata
+            shipping_cost: String(shippingCost || 0),
             
             // Add a description that includes all key info for fallback
             description: `Quote ${primaryQuoteId} - ${primaryFileName} - ${technology} ${material}`

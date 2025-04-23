@@ -15,7 +15,7 @@ const getStripeInstance = (isTestMode: boolean = false) => {
   }
   
   return new Stripe(stripeKey, {
-    apiVersion: '2023-10-16', // Use the latest API version
+    apiVersion: '2025-03-31.basil', // Update to match the required type
   });
 };
 
@@ -41,20 +41,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Calculate the total amount
-    const amount = items.reduce(
+    // Debug log the full items array to verify shipping is included
+    console.log('Payment Intent Items:', JSON.stringify(items));
+
+    // SIMPLIFIED APPROACH: Calculate total amount directly from all items
+    // This includes both products and shipping costs as one total
+    let totalAmount = Math.round(items.reduce(
       (total: number, item: CartItem) => total + (item.price * item.quantity),
       0
-    );
-
-    // Add shipping cost ($20/kg)
-    const shippingCost = items.reduce(
-      (total: number, item: CartItem) =>
-        total + (item.weightInKg * item.quantity * 20),
-      0
-    );
-
-    let totalAmount = Math.round((amount + shippingCost) * 100); // Convert to cents
+    ) * 100); // Convert to cents
+    
+    // Log the total amount being sent to Stripe
+    console.log(`Sending total amount to Stripe: $${totalAmount/100} (${totalAmount} cents)`);
 
     // Check if admin/test coupon code is provided
     let isTestMode = false;

@@ -287,6 +287,14 @@ export interface CreateCheckoutSessionRequest {
   quantity?: number;
   quote_id?: string;
   file_name?: string;
+  shipping_cost?: number;
+  items?: Array<{
+    id: string;
+    name: string;
+    price: number;
+    quantity: number;
+    description?: string;
+  }>;
 }
 
 /**
@@ -304,14 +312,146 @@ export interface CreateCheckoutSessionResponse {
 export async function createCheckoutSession(
   params: CreateCheckoutSessionRequest
 ): Promise<CreateCheckoutSessionResponse> {
+  // CRITICAL TERMINAL LOGGING
+  console.log('\n===== API SHIPPING COST DEBUG (TERMINAL) =====');
+  console.log('RECEIVED SHIPPING COST:', params.shipping_cost);
+  console.log('SHIPPING COST TYPE:', typeof params.shipping_cost);
+  console.log('SHIPPING COST AS NUMBER:', Number(params.shipping_cost));
+  
   console.log("Requesting Stripe Checkout session with params:", params);
+  
+  // Add detailed shipping cost log
+  console.log(`\n
+🚚 🚚 🚚 SHIPPING COST DEBUG 🚚 🚚 🚚
+Request includes shipping_cost: $${params.shipping_cost?.toFixed(2) || '0.00'}
+\n`);
+  
+  // Ensure shipping cost is a valid number and convert to cents for Stripe
+  const shippingCostCents = Math.round(Number(params.shipping_cost || 0) * 100);
+  console.log('SHIPPING COST IN CENTS:', shippingCostCents);
+  
+  // Setup line items based on whether we have individual items or just a single item
+  const lineItems = params.items ? 
+    // If items array is provided, create line items for each
+    params.items.map(item => ({
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      description: item.description || `Quote: ${item.id}`
+    }))
+    :
+    // Otherwise use the legacy single item approach
+    [
+      // Main product
+      {
+        name: params.item_name,
+        price: params.price,
+        quantity: params.quantity || 1,
+        description: `3D part - ${params.file_name || 'Custom Part'}`
+      }
+    ];
+    
+  // Add shipping as a separate line item if cost provided
+  if (shippingCostCents > 0) {
+    console.log(`\n
+✅ ADDING SHIPPING LINE ITEM: $${(shippingCostCents/100).toFixed(2)}
+\n`);
+    
+    lineItems.push({
+      name: 'Shipping & Handling',
+      price: shippingCostCents / 100, // Convert back to dollars for the line item
+      quantity: 1,
+      description: 'Standard shipping'
+    });
+  } else {
+    console.log(`\n
+❌ NOT ADDING SHIPPING LINE ITEM - Value is $${(shippingCostCents/100).toFixed(2)}
+\n`);
+  }
+  
+  // Create a request that includes all items and shipping
+  const requestBody = {
+    // Base params for backward compatibility
+    item_name: params.item_name,
+    price: params.price,
+    currency: params.currency || 'usd',
+    quantity: params.quantity || 1,
+    quote_id: params.quote_id || '',
+    file_name: params.file_name || '',
+    shipping_cost: Number(params.shipping_cost || 0), // Ensure this is a number
+    
+    // Add the line items we constructed
+    line_items: lineItems,
+    
+    // CRITICAL: Set up mode and special Stripe display flags for shipping
+    mode: 'payment',
+    shipping_options: [
+      {
+        shipping_rate_data: {
+          display_name: 'Standard Shipping',
+          type: 'fixed_amount',
+          fixed_amount: {
+            amount: shippingCostCents,
+            currency: params.currency?.toLowerCase() || 'usd'
+          }
+        }
+      }
+    ],
+    
+    // Include metadata for tracking
+    metadata: {
+      quote_id: params.quote_id || '',
+      file_name: params.file_name || '',
+      shipping_cost: params.shipping_cost ? params.shipping_cost.toString() : '0',
+      item_count: params.items ? params.items.length.toString() : '1',
+      // Add all quote IDs and filenames in a compact format for webhook processing
+      all_quote_ids: params.items ? params.items.map(item => item.id).join(',') : params.quote_id || '',
+      all_file_names: params.items ? params.items.map(item => item.name).join(',') : params.file_name || '',
+      // Add total price information
+      total_items_price: (params.items 
+        ? params.items.reduce((sum, item) => sum + (item.price * item.quantity), 0) 
+        : params.price
+      ).toString()
+    }
+  };
+  
+  // Explicit terminal logging for the final total amount
+  const totalAmount = requestBody.line_items.reduce((sum, item) => 
+    sum + (item.price * item.quantity), 0);
+    
+  console.log('\n===== FINAL CHECKOUT TOTALS (TERMINAL) =====');
+  console.log('ITEMS TOTAL:', params.items 
+    ? params.items.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2)
+    : params.price.toFixed(2));
+  console.log('SHIPPING COST:', (shippingCostCents/100).toFixed(2));
+  console.log('CALCULATED TOTAL:', totalAmount.toFixed(2));
+  console.log('LINE ITEMS COUNT:', requestBody.line_items.length);
+  
+  console.log(`\n
+📦 CHECKOUT REQUEST DETAILS 📦
+Total Items: ${requestBody.metadata.item_count}
+Items Price: $${requestBody.metadata.total_items_price}
+Shipping Cost: $${requestBody.metadata.shipping_cost}
+Line Items Count: ${lineItems.length}
+\n`);
+
+  // Log the FULL request body with shipping emphasized
+  console.log(`\n
+🔍 FULL REQUEST BODY 🔍
+${JSON.stringify({
+  ...requestBody,
+  shipping_cost_highlighted: requestBody.shipping_cost,
+  total_calculated: totalAmount
+}, null, 2)}
+\n`);
+
   try {
     const response = await fetch(`${API_BASE_URL}/create-checkout-session`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(params),
+      body: JSON.stringify(requestBody),
     });
 
     console.log('Checkout Session API Status:', response.status);
@@ -361,6 +501,7 @@ export interface CreatePaymentIntentRequest {
   customer_email?: string;
   // Add other fields matching backend Pydantic model PaymentIntentRequest if needed
   metadata?: Record<string, string>;
+  couponCode?: string;
 }
 
 export interface PaymentIntentResponse {
@@ -369,6 +510,8 @@ export interface PaymentIntentResponse {
   amount?: number;
   currency?: string;
   error?: string;
+  discount?: number;
+  isTestMode?: boolean;
 }
 
 /**

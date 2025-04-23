@@ -52,7 +52,7 @@ export default function CheckoutPage() {
 
   // Calculate total
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const shipping = 5.00; // Example shipping cost
+  const shipping = shippingCost;
   const total = subtotal + shipping;
 
   // Handle form changes
@@ -405,11 +405,11 @@ export default function CheckoutPage() {
             <Elements stripe={stripePromise} options={options}>
               {/* Pass cart items and callbacks to the form */}
               <CheckoutForm
-                cartItems={items}
                 totalAmount={total}
                 onPaymentSuccess={handlePaymentSuccess}
                 onPaymentError={handlePaymentError}
                 onLoadingChange={handleLoadingChange}
+                shippingCost={shipping}
               />
             </Elements>
             {/* Display loading/error messages triggered by CheckoutForm */} 

@@ -293,7 +293,10 @@ export default function NewQuoteForm() {
             fileName: modelFile.name,
             fileType: modelFile.name.split('.').pop()?.toLowerCase(),
             quoteId: response.quote_id,
-            technology: printTechnology
+            technology: printTechnology,
+            // Add weight data for shipping calculations
+            weight_g: response.cost_estimate?.material_weight_g || 100,
+            volume_cm3: response.cost_estimate?.total_volume_cm3 || 0
           }));
           
           // Also store a reference to the file name for sending to Slack
@@ -309,6 +312,9 @@ export default function NewQuoteForm() {
             lastModified: modelFile.lastModified,
             quoteId: response.quote_id,
             technology: printTechnology,
+            // Add weight data for shipping calculations
+            weight_g: response.cost_estimate?.material_weight_g || 100,
+            volume_cm3: response.cost_estimate?.total_volume_cm3 || 0,
             // Store a flag indicating we need to get the file from the server instead
             serverStored: true
           };
@@ -323,6 +329,15 @@ export default function NewQuoteForm() {
             formData.append('file', modelFile);
             formData.append('quoteId', response.quote_id);
             formData.append('technology', printTechnology || 'unknown');
+            // Add FFF/FDM specific data for slicing configuration
+            if (printTechnology === 'FDM') {
+              formData.append('fff_configured', 'true');
+              formData.append('material', material);
+              if (response.cost_estimate) {
+                formData.append('weight_g', String(response.cost_estimate.material_weight_g || 0));
+                formData.append('volume_cm3', String(response.cost_estimate.total_volume_cm3 || 0));
+              }
+            }
             
             // Send the file to the server
             console.log(`DEBUG: Uploading model file to server for quote ${response.quote_id}`);
@@ -372,18 +387,34 @@ export default function NewQuoteForm() {
       return;
     }
 
+    // Check if FFF/FDM technology is selected but missing configuration
+    if (printTechnology === 'FDM' && (!response.cost_estimate || !response.material_info)) {
+      console.error('Missing FFF configuration for FDM print');
+      setCheckoutError('Missing slicer configuration for FDM printing. Please try again or contact support.');
+      return;
+    }
+
     setIsCheckingOut(true);
     setCheckoutError('');
 
     try {
+      // Calculate shipping cost based on weight ($20/kg)
+      // Get weight in kg (convert from grams)
+      const weightInKg = response.cost_estimate?.material_weight_g 
+        ? response.cost_estimate.material_weight_g / 1000 
+        : 0.1; // Default to 100g if weight is unknown
+      
+      const shippingCost = Math.max(5, weightInKg * 20 * quantity); // Minimum $5 shipping
+      
       // 1. Call backend to create a checkout session
       const checkoutResponse = await createCheckoutSession({
         item_name: `Quote ${response.quote_id.substring(0, 8)} - ${modelFile.name}`,
         price: response.customer_price,
         currency: response.material_info?.currency || 'usd',
-        quantity: 1,
+        quantity: quantity,
         quote_id: response.quote_id,
-        file_name: modelFile.name
+        file_name: modelFile.name,
+        shipping_cost: shippingCost
       });
 
       if (checkoutResponse.error || !checkoutResponse.sessionId) {
@@ -583,6 +614,16 @@ export default function NewQuoteForm() {
                   <p className="whitespace-nowrap">
                     ${(response.customer_price! * quantity).toFixed(2)} {response.material_info?.currency || 'USD'}
                     {quantity > 1 && <span className="ml-2 text-white/60">(${response.customer_price?.toFixed(2)}/ea)</span>}
+                  </p>
+                  
+                  <p className="font-medium whitespace-nowrap">Shipping:</p>
+                  <p className="whitespace-nowrap">
+                    ${(Math.max(5, (response.cost_estimate?.material_weight_g ? response.cost_estimate.material_weight_g / 1000 : 0.1) * 20 * quantity)).toFixed(2)} {response.material_info?.currency || 'USD'}
+                  </p>
+                  
+                  <p className="font-medium whitespace-nowrap">Total:</p>
+                  <p className="whitespace-nowrap font-bold">
+                    ${(response.customer_price! * quantity + Math.max(5, (response.cost_estimate?.material_weight_g ? response.cost_estimate.material_weight_g / 1000 : 0.1) * 20 * quantity)).toFixed(2)} {response.material_info?.currency || 'USD'}
                   </p>
                   
                   <p className="font-medium whitespace-nowrap">Quantity:</p>

@@ -56,6 +56,45 @@ export async function POST(req: NextRequest) {
     // Get the technology (optional)
     const technology = formData.get('technology') as string;
     
+    // Check for FFF/FDM specific configuration
+    const isFffConfigured = formData.get('fff_configured') === 'true';
+    const material = formData.get('material') as string;
+    const weightG = formData.get('weight_g') as string;
+    const volumeCm3 = formData.get('volume_cm3') as string;
+    
+    // Log FFF configuration if available
+    if (isFffConfigured) {
+      console.log(`DEBUG: FFF configuration present for ${quoteId}`);
+      console.log(`DEBUG: Material: ${material}, Weight: ${weightG}g, Volume: ${volumeCm3}cm³`);
+      
+      try {
+        // Create or update a configuration file for this model
+        // This will be used by the slicing service
+        const configData = {
+          quoteId,
+          technology: technology || 'FDM',
+          material: material || 'PLA',
+          weightG: parseFloat(weightG || '0'),
+          volumeCm3: parseFloat(volumeCm3 || '0'),
+          configuredAt: new Date().toISOString()
+        };
+        
+        // Path for FFF configuration storage
+        const configPath = join(process.cwd(), 'storage', 'fff-configs', `${quoteId}.json`);
+        
+        // Ensure the directory exists
+        const { promises: fs } = require('fs');
+        await fs.mkdir(join(process.cwd(), 'storage', 'fff-configs'), { recursive: true });
+        
+        // Write the configuration file
+        await fs.writeFile(configPath, JSON.stringify(configData, null, 2));
+        console.log(`DEBUG: Saved FFF configuration to ${configPath}`);
+      } catch (configError) {
+        console.error('DEBUG: Error saving FFF configuration:', configError);
+        // Continue even if config save fails - we'll still upload the model
+      }
+    }
+    
     console.log(`DEBUG: Processing upload for file: ${file.name}, quoteId: ${quoteId}, technology: ${technology || 'unknown'}`);
     console.log(`DEBUG: File size: ${file.size} bytes, type: ${file.type}`);
     
@@ -69,7 +108,14 @@ export async function POST(req: NextRequest) {
       file.name,
       quoteId,
       undefined, // No order number yet
-      'Uploaded Model' // Generic part name
+      'Uploaded Model', // Generic part name
+      { // Add metadata including FFF configuration
+        technology,
+        isFffConfigured: isFffConfigured ? 'true' : 'false',
+        material: material || '',
+        weightG: weightG || '',
+        volumeCm3: volumeCm3 || ''
+      }
     );
     
     if (!savedFile) {
@@ -92,7 +138,8 @@ export async function POST(req: NextRequest) {
       fileSize: savedFile.fileSize,
       fileType: savedFile.fileType,
       quoteId: savedFile.quoteId,
-      storagePath: join(process.cwd(), 'storage', 'models')
+      storagePath: join(process.cwd(), 'storage', 'models'),
+      fffConfigured: isFffConfigured
     };
     
     console.log(`DEBUG: Returning upload success response: ${JSON.stringify(response)}`);

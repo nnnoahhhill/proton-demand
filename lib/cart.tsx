@@ -19,6 +19,8 @@ export interface CartItem {
   metadata?: {
     technology?: string; // FDM, SLA, SLS
     originalFileName?: string;
+    weight_g?: number;
+    volume_cm3?: number;
     [key: string]: any;
   };
 }
@@ -106,19 +108,35 @@ export function CartProvider({ children }: { children: ReactNode }) {
       ? weightInGrams / 1000
       : volumeInCm3 * 0.00105; // Convert cm³ to kg using assumed density
 
-    // Get technology from localStorage if available
+    // Get technology and weight from localStorage if available
     let technology = undefined;
+    let storedWeightG = undefined;
     try {
       if (typeof window !== 'undefined' && localStorage) {
-        const storedFileData = localStorage.getItem(`model_file_${quote.quote_id}`);
-        if (storedFileData) {
-          const fileData = JSON.parse(storedFileData);
-          technology = fileData.technology;
+        // First check for enhanced metadata
+        const storedMetadata = localStorage.getItem(`model_file_metadata_${quote.quote_id}`);
+        if (storedMetadata) {
+          const metadata = JSON.parse(storedMetadata);
+          technology = metadata.technology;
+          storedWeightG = metadata.weight_g;
+        } else {
+          // Fall back to basic file data
+          const storedFileData = localStorage.getItem(`model_file_${quote.quote_id}`);
+          if (storedFileData) {
+            const fileData = JSON.parse(storedFileData);
+            technology = fileData.technology;
+            storedWeightG = fileData.weight_g;
+          }
         }
       }
     } catch (e) {
-      console.error('Error getting technology from localStorage:', e);
+      console.error('Error getting metadata from localStorage:', e);
     }
+
+    // Use stored weight if available, otherwise use the estimated weight
+    const finalWeightInKg = storedWeightG 
+      ? storedWeightG / 1000 
+      : (typeof estimatedWeightInKg === 'number' ? estimatedWeightInKg : 0.1);
 
     const newItem: CartItem = {
       id: quote.quote_id, // Use quote_id instead of quoteId
@@ -133,15 +151,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
       addedAt: new Date(),
       quantity: itemQuantity,
       // Use calculated weight, ensuring it's a number
-      weightInKg: typeof estimatedWeightInKg === 'number' ? estimatedWeightInKg : 0,
+      weightInKg: finalWeightInKg > 0 ? finalWeightInKg : 0.1, // Minimum 100g (0.1kg)
       // Add metadata including technology if available
       metadata: {
         technology: technology || quote.technology, // Use either stored or response technology
         originalFileName: fileName,
+        weight_g: storedWeightG || quote.cost_estimate?.material_weight_g || 100,
+        volume_cm3: quote.cost_estimate?.total_volume_cm3 || 0
       }
     };
 
-    console.log(`Adding item to cart: ${newItem.id} with quantity ${itemQuantity}`);
+    console.log(`Adding item to cart: ${newItem.id} with quantity ${itemQuantity}, weight: ${newItem.weightInKg}kg`);
 
     // Check if item already exists
     const existingItemIndex = items.findIndex(item => item.id === newItem.id);
@@ -187,14 +207,39 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const subtotalPrice = items.reduce((total, item) => total + (item.price * item.quantity), 0);
 
   // Calculate shipping cost ($10 base + $20/kg)
+  // Simplified shipping calculation and logging for consistency
+  console.log('\n===== CART CONTEXT SHIPPING CALCULATION =====');
+  console.log('ITEMS COUNT:', items.length);
+  console.log('TOTAL ITEMS (WITH QUANTITY):', totalItems);
+  console.log('SUBTOTAL PRICE:', subtotalPrice.toFixed(2));
+  
   const baseShippingFee = items.length > 0 ? 10 : 0; // Add $10 base fee if cart is not empty
+  console.log('BASE SHIPPING FEE:', baseShippingFee.toFixed(2));
+  
+  // Log each item's weight contribution
+  if (items.length > 0) {
+    console.log('\n----- Item Weight Calculations -----');
+    items.forEach((item, idx) => {
+      console.log(`ITEM ${idx+1}: ${item.fileName}`);
+      console.log(`  Weight: ${item.weightInKg.toFixed(3)}kg`);
+      console.log(`  Quantity: ${item.quantity}`);
+      const itemShipping = item.weightInKg * item.quantity * 20;
+      console.log(`  Shipping contribution: $${itemShipping.toFixed(2)}`);
+    });
+  }
+  
   const weightBasedShippingCost = items.reduce((total, item) => 
     total + (item.weightInKg * item.quantity * 20), // $20 per kg
   0);
-  const shippingCost = baseShippingFee + weightBasedShippingCost;
+  console.log('WEIGHT-BASED SHIPPING:', weightBasedShippingCost.toFixed(2));
+  
+  const shippingCost = Math.max(5, baseShippingFee + weightBasedShippingCost); // Minimum $5 shipping
+  console.log('FINAL SHIPPING COST:', shippingCost.toFixed(2));
 
   // Calculate total price (including shipping)
   const totalPrice = subtotalPrice + shippingCost;
+  console.log('TOTAL PRICE WITH SHIPPING:', totalPrice.toFixed(2));
+  console.log('=======================================\n');
 
   return (
     <CartContext.Provider
