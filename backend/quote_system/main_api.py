@@ -1,6 +1,7 @@
 # main_api.py
 
 import os
+import re  # For regex pattern matching
 import time
 import logging
 import tempfile
@@ -542,89 +543,528 @@ async def stripe_webhook(request: Request, background_tasks: BackgroundTasks, st
         logger.error(f"Error constructing webhook event: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing error")
 
+    # Import datetime modules at the top level to avoid local variable errors
+    from datetime import datetime, timezone, timedelta
+
     # --- Handle the payment_intent.succeeded event ---
     if event['type'] == 'payment_intent.succeeded':
-        payment_intent = event['data']['object']
-        logger.info(f"Webhook: PaymentIntent succeeded: {payment_intent.id}")
-
-        # Extract details
-        amount_received = payment_intent.get('amount_received', 0) / 100.0
-        currency = payment_intent.get('currency', 'usd').upper()
-        payment_intent_id = payment_intent.id
-        customer_email = payment_intent.get('receipt_email') or payment_intent.get('shipping', {}).get('email')
-        customer_name = payment_intent.get('shipping', {}).get('name', 'N/A')
-        shipping_details = payment_intent.get('shipping')
-        shipping_address_str = "Shipping address not provided via Stripe."
-        if shipping_details and shipping_details.get('address'):
-             addr = shipping_details['address']
-             line1 = addr.get('line1', '')
-             line2 = addr.get('line2') # Get line2, might be None
-             city = addr.get('city', '')
-             state = addr.get('state', '')
-             postal_code = addr.get('postal_code', '')
-             country = addr.get('country', '')
-             
-             # Build address string line by line, handling potential None for line2
-             address_lines = [line1]
-             if line2: # Only add line2 if it's not None or empty
-                 address_lines.append(line2)
-             address_lines.append(f"{city}, {state} {postal_code}")
-             address_lines.append(country)
-             
-             shipping_address_str = "\n".join(filter(None, address_lines)) # Join non-empty lines
-        
-        metadata = payment_intent.get('metadata', {})
-        quote_id = metadata.get('quote_id')
-        file_name = metadata.get('file_name', 'Unknown Filename')
-        received_timestamp = datetime.fromtimestamp(payment_intent.created, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
-
-        # --- Construct Slack Message Blocks ---
-        # Use single \n for mrkdwn newlines
-        slack_blocks = [
-             {"type": "header", "text": {"type": "plain_text", "text": ":package: New Order Ready for Fulfillment!", "emoji": True}},
-             {"type": "section", "fields": [
-                 {"type": "mrkdwn", "text": f"*Quote ID:*\n{quote_id or 'N/A'}"},
-                 {"type": "mrkdwn", "text": f"*Filename:*\n{file_name or 'N/A'}"},
-                 {"type": "mrkdwn", "text": f"*Amount Paid:*\n{amount_received:.2f} {currency}"},
-                 {"type": "mrkdwn", "text": f"*Customer Email:*\n{customer_email or 'N/A'}"},
-                 {"type": "mrkdwn", "text": f"*Shipping Name:*\n{customer_name}"}
-             ]},
-             {"type": "section", "text": {"type": "mrkdwn", "text": f"*Shipping Address:*\n```\n{shipping_address_str}\n```"}},
-             {"type": "divider"},
-             {"type": "context", "elements": [{"type": "mrkdwn", "text": f"Payment Intent: `{payment_intent_id}` | Received: {received_timestamp}"}]}
-        ]
-        slack_fallback_text = f"New Order: Quote {quote_id or 'N/A'}, File {file_name or 'N/A'}, Amount {amount_received:.2f} {currency}"
-
-        # --- Get File Path (if available) ---
-        file_path_to_upload = None
-        # Check if quote_id is valid before lookup
-        if quote_id and quote_id not in ['N/A', 'MISSING', None, '']:
-            if quote_id in temp_file_storage:
-                file_path_to_upload = temp_file_storage.get(quote_id)
-                if file_path_to_upload and os.path.exists(file_path_to_upload):
-                     logger.info(f"Webhook: Found temp file path '{file_path_to_upload}' for quote '{quote_id}'. Will attempt Slack upload.")
+        try:
+            payment_intent = event['data']['object']
+            logger.info(f"Webhook: PaymentIntent succeeded: {payment_intent.id}")
+            
+            # Try to post a minimal Slack message immediately to ensure we capture the payment
+            # This is a safeguard against processing errors
+            # Use synchronous WebClient to avoid any await issues
+            try:
+                from slack_sdk import WebClient as SyncWebClient
+                
+                slack_token = getattr(settings, 'slack_bot_token', os.getenv('SLACK_BOT_TOKEN'))
+                channel_id = getattr(settings, 'slack_upload_channel_id', os.getenv('SLACK_UPLOAD_CHANNEL_ID'))
+                
+                if slack_token and channel_id:
+                    minimal_client = SyncWebClient(token=slack_token)
+                    minimal_client.chat_postMessage(
+                        channel=channel_id,
+                        text=f"⚠️ PAYMENT ALERT: Received payment with ID {payment_intent.id} - Processing full notification..."
+                    )
+                    logger.info("Sent initial payment alert to Slack")
                 else:
-                     logger.warning(f"Webhook: File path for quote '{quote_id}' found in storage ('{file_path_to_upload}') but file doesn't exist or path is invalid. Proceeding without upload.")
-                     file_path_to_upload = None # Reset if file not found
-                     # Cleanup the bad entry?
-                     cleanup_temp_file_and_storage(quote_id, file_path_to_upload)
-            else:
-                # Add detailed logging here
-                available_keys = list(temp_file_storage.keys())
-                logger.error(f"Webhook: Quote ID '{quote_id}' received, but no temporary file path found in storage. Available keys: {available_keys}")
-        else:
-            logger.error(f"Webhook: No valid Quote ID found in payment intent metadata (received: '{quote_id}'). Cannot look up file for upload.")
+                    logger.warning("Could not send initial payment alert - missing token or channel")
+            except Exception as minimal_error:
+                logger.error(f"Unable to send minimal payment alert: {minimal_error}")
 
-        # --- Send Notification (with or without file) ---
-        # Use background task to avoid delaying webhook response
-        background_tasks.add_task(
-            send_slack_notification,
-            payload_blocks=slack_blocks,
-            fallback_text=slack_fallback_text,
-            file_path=file_path_to_upload,
-            file_name=file_name,
-            quote_id=quote_id
-        )
+            # Extract details
+            # Dump the full payment intent contents for debugging
+            try:
+                pi_dump = str(payment_intent)
+                logger.info(f"DEBUG: Full payment intent (first 500 chars): {pi_dump[:500]}...")
+            except Exception as dump_error:
+                logger.error(f"Error dumping payment intent: {dump_error}")
+            
+            amount_received = payment_intent.get('amount_received', 0) / 100.0
+            currency = payment_intent.get('currency', 'usd').upper()
+            payment_intent_id = payment_intent.id
+            customer_email = payment_intent.get('receipt_email') or payment_intent.get('shipping', {}).get('email')
+            customer_name = payment_intent.get('shipping', {}).get('name', 'N/A')
+            shipping_details = payment_intent.get('shipping')
+            shipping_address_str = "Shipping address not provided via Stripe."
+            if shipping_details and shipping_details.get('address'):
+                 addr = shipping_details['address']
+                 line1 = addr.get('line1', '')
+                 line2 = addr.get('line2') # Get line2, might be None
+                 city = addr.get('city', '')
+                 state = addr.get('state', '')
+                 postal_code = addr.get('postal_code', '')
+                 country = addr.get('country', '')
+                 
+                 # Build address string line by line, handling potential None for line2
+                 address_lines = [line1]
+                 if line2: # Only add line2 if it's not None or empty
+                     address_lines.append(line2)
+                 address_lines.append(f"{city}, {state} {postal_code}")
+                 address_lines.append(country)
+                 
+                 shipping_address_str = "\n".join(filter(None, address_lines)) # Join non-empty lines
+            
+            # Locate and extract metadata in various ways Stripe might send it
+            metadata = payment_intent.get('metadata', {})
+            if not metadata and isinstance(payment_intent, dict):
+                # Try different ways metadata might be nested
+                if 'data' in payment_intent and 'object' in payment_intent['data']:
+                    metadata = payment_intent['data']['object'].get('metadata', {})
+                    
+            # Check alternate data structures that might occur in webhook events    
+            if not metadata or not metadata.get('quote_id'):
+                # Look at checkout.session.completed event which might have the metadata
+                checkout_session = payment_intent.get('checkout_session') or event.get('data', {}).get('object', {}).get('checkout_session')
+                if checkout_session:
+                    metadata = checkout_session.get('metadata', {})
+                
+            # Dump the metadata for debugging
+            logger.info(f"DEBUG: Metadata from payment intent: {metadata}")
+            
+            quote_id = metadata.get('quote_id')
+            file_name = metadata.get('file_name', 'Unknown Filename')
+            
+            # If we still don't have a quote ID, try fetching it from our database or look for it in the session ID
+            if not quote_id:
+                # Try fallback strategies to extract quote ID
+                try:
+                    # Check if we can find it in local storage from a recent checkout
+                    logger.info(f"## QUOTE EXTRACT: No quote ID in metadata, looking for fallbacks")
+                    
+                    # Look through various object properties
+                    description = payment_intent.get('description', '')
+                    if description and 'Q-' in description:
+                        # Extract Q-NUMBER pattern
+                        quote_match = re.search(r'Q-[0-9]+', description)
+                        if quote_match:
+                            quote_id = quote_match.group(0)
+                            logger.info(f"## QUOTE EXTRACT: Found quote ID {quote_id} from description")
+                    
+                    # Look in potential alternative metadata locations
+                    if payment_intent and isinstance(payment_intent, dict) and not quote_id:
+                        pi_details = str(payment_intent)
+                        quote_match = re.search(r'Q-[0-9]+', pi_details)
+                        if quote_match:
+                            quote_id = quote_match.group(0)
+                            logger.info(f"## QUOTE EXTRACT: Found quote ID {quote_id} in payment intent details")
+                    
+                    # Look for the quote in object purpose (often contains a description or reference)
+                    if payment_intent.get('object') == 'payment_intent' and not quote_id:
+                        # Try to find files in the storage directory that match the amount paid
+                        # This is a fallback when all else fails
+                        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+                        storage_dir = os.path.join(project_root, 'storage', 'models')
+                        if os.path.exists(storage_dir):
+                            most_recent_file = None
+                            most_recent_time = 0
+                            for filename in os.listdir(storage_dir):
+                                if filename.startswith('Q-'):
+                                    # Extract the quote ID from the filename
+                                    quote_match = re.search(r'(Q-[0-9]+)', filename)
+                                    if quote_match:
+                                        potential_quote_id = quote_match.group(1)
+                                        file_path = os.path.join(storage_dir, filename)
+                                        file_time = os.path.getmtime(file_path)
+                                        # Keep track of most recent file
+                                        if file_time > most_recent_time:
+                                            most_recent_time = file_time
+                                            most_recent_file = file_path
+                                            quote_id = potential_quote_id
+                            
+                            if most_recent_file:
+                                logger.info(f"DEBUG: Found most recent quote file: {most_recent_file}")
+                                file_name = os.path.basename(most_recent_file)
+                except Exception as quote_extract_error:
+                    logger.error(f"Error trying to extract quote ID: {quote_extract_error}")
+            
+            # Get the created timestamp safely
+            try:
+                created_ts = payment_intent.created
+                received_timestamp = datetime.fromtimestamp(created_ts, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z')
+            except Exception as ts_error:
+                logger.error(f"Error formatting timestamp: {ts_error}")
+                received_timestamp = "Unknown time"
+
+            # --- Construct Slack Message Blocks ---
+            # Use single \n for mrkdwn newlines
+            # Include the Quote ID in the header if available
+            header_text = f":package: New Manufacturing Order {quote_id and f'(Quote: {quote_id})' or ''}"
+            
+            # Get technology and material info from metadata if available
+            technology = metadata.get('technology', '')
+            material = metadata.get('material', '')
+            quantity = metadata.get('quantity', '1')
+            
+            # If technology or material is missing, try to extract it from the file in storage
+            if (not technology or not material) and quote_id:
+                try:
+                    # Extract technology and material from the full path
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+                    storage_dir = os.path.join(project_root, 'storage', 'models')
+                    if os.path.exists(storage_dir):
+                        for filename in os.listdir(storage_dir):
+                            if quote_id in filename:
+                                logger.info(f"DEBUG: Found file in storage matching quote ID: {filename}")
+                                
+                                # Get additional info from the system
+                                if not material or material == 'Not specified':
+                                    # Try to extract material info from temp file storage or database
+                                    # Look for recent quotes in the quotes system
+                                    # This is a fallback based on the file found in storage
+                                    temp_file_path = os.path.join(storage_dir, filename)
+                                    try:
+                                        # If missing, look up material from file or quote database
+                                        from processes.print_3d.processor import Print3DProcessor
+                                        processor = Print3DProcessor(markup=settings.markup_factor)
+                                        
+                                        # Get materials list
+                                        available_materials = processor.list_available_materials()
+                                        if available_materials:
+                                            # Default to SLA for files we know are 3D printed
+                                            material = "Standard Resin (SLA)"
+                                            if "sla" in technology.lower():
+                                                material = "Standard Resin (SLA)"
+                                            elif "fdm" in technology.lower():
+                                                material = "PLA (FDM)"
+                                            
+                                            logger.info(f"DEBUG: Set material to {material} based on technology")
+                                    except Exception as material_lookup_error:
+                                        logger.error(f"Error looking up material: {material_lookup_error}")
+                                
+                                if not technology or technology == 'Standard':
+                                    # Try to guess technology from the file or path
+                                    if 'sla' in filename.lower() or 'resin' in filename.lower():
+                                        technology = 'SLA'
+                                    elif 'fdm' in filename.lower() or 'pla' in filename.lower():
+                                        technology = 'FDM'
+                                    else:
+                                        # Default to SLA for most files
+                                        technology = 'SLA'
+                                        
+                                    logger.info(f"DEBUG: Set technology to {technology} based on filename")
+                except Exception as tech_extract_error:
+                    logger.error(f"Error extracting technology info: {tech_extract_error}")
+            
+            # Set defaults if still not found
+            if not technology or technology == '':
+                technology = 'SLA'  # Default to SLA
+            
+            if not material or material == '':
+                material = 'Standard Resin'  # Default material
+            
+            # Format the order date with PST offset
+            try:
+                # Convert UTC timestamp to approximate PST
+                # This is a simpler approach that doesn't require the pytz library
+                utc_time = datetime.fromtimestamp(payment_intent.created, tz=timezone.utc)
+                
+                # Apply PST offset (UTC-7 for PDT, UTC-8 for PST)
+                # Using -7 hours as an approximation (this would be PDT)
+                pst_offset = timedelta(hours=-7)
+                pst_time = utc_time.astimezone(timezone(pst_offset))
+                pst_time_str = pst_time.strftime('%B %d, %Y, %I:%M %p')
+            except Exception as dt_error:
+                logger.error(f"Error formatting PST time: {dt_error}")
+                pst_time_str = "Unknown time (PST)"
+            
+            # Format item details including technology and material
+            try:
+                item_detail = (
+                    f"• {quantity}x {file_name}\n"
+                    f"   Technology: *{technology}*\n"
+                    f"   Material: *{material}*\n"
+                    f"   Amount: *{amount_received:.2f} {currency}*"
+                )
+            except Exception as format_error:
+                logger.error(f"Error formatting item details: {format_error}")
+                item_detail = f"• Item: {file_name} (Error formatting complete details)"
+            
+            # Create blocks with careful error handling
+            try:
+                slack_blocks = [
+                    {"type": "header", "text": {"type": "plain_text", "text": header_text[:150], "emoji": True}},
+                    # Customer section
+                    {"type": "section", "fields": [
+                        {"type": "mrkdwn", "text": f"*Customer:*\n{customer_name}"},
+                        {"type": "mrkdwn", "text": f"*Email:*\n{customer_email or 'N/A'}"}
+                    ]},
+                    # Order date in PST
+                    {"type": "section", "fields": [
+                        {"type": "mrkdwn", "text": f"*Order Date (PST):*\n{pst_time_str}"},
+                    ]},
+                    # Quote ID
+                    {"type": "section", "fields": [
+                        {"type": "mrkdwn", "text": f"*Quote ID:*\n{quote_id or 'N/A'}"},
+                        {"type": "mrkdwn", "text": f"*Order ID:*\n{payment_intent_id}"} 
+                    ]},
+                    # Item details with technology and material
+                    {"type": "section", "text": {"type": "mrkdwn", "text": f"*Ordered Items:*\n{item_detail}"}},
+                    # Shipping address
+                    {"type": "section", "text": {"type": "mrkdwn", "text": f"*Shipping Address:*\n```\n{shipping_address_str}\n```"}},
+                    {"type": "divider"},
+                    # Footer with timestamp
+                    {"type": "context", "elements": [
+                        {"type": "mrkdwn", "text": f"ProtonDemand Manufacturing • Order received at {pst_time_str} (PST)"}
+                    ]}
+                ]
+            except Exception as blocks_error:
+                logger.error(f"Error creating Slack blocks: {blocks_error}")
+                # Create minimal blocks if there's an error
+                slack_blocks = [
+                    {"type": "header", "text": {"type": "plain_text", "text": "⚠️ New Manufacturing Order (Error formatting full details)", "emoji": True}},
+                    {"type": "section", "text": {"type": "mrkdwn", "text": f"*Payment ID:* {payment_intent_id}\n*Quote ID:* {quote_id or 'N/A'}\n*Amount:* {amount_received:.2f} {currency}\n\nPlease check the server logs for complete details."}},
+                ]
+            
+            # Create fallback text for notifications
+            slack_fallback_text = f"New Manufacturing Order (Quote: {quote_id or 'N/A'}) - Customer: {customer_name}, Email: {customer_email or 'N/A'}, File: {file_name or 'N/A'}"
+        except Exception as processing_error:
+            # If anything fails during processing, send an emergency notification
+            logger.error(f"Critical error processing payment webhook: {processing_error}", exc_info=True)
+            slack_blocks = [
+                {"type": "header", "text": {"type": "plain_text", "text": "🚨 URGENT: Payment Received with Processing Error", "emoji": True}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"A payment was received but there was an error processing the full details.\n\n*Payment ID:* {payment_intent.id if 'payment_intent' in locals() else 'Unknown'}\n\nPlease check the server logs immediately and manually handle this order!"}}
+            ]
+            slack_fallback_text = "URGENT: Payment received but processing failed. Check server logs!"
+
+        try:
+            # --- Get File Path (if available) - ONLY IN /storage/models/ ---
+            file_path_to_upload = None
+            model_found = False
+            
+            # ONLY check the storage/models directory - nowhere else
+            # Use project root directory instead of os.getcwd() to ensure consistent path
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+            storage_dir = os.path.join(project_root, 'storage', 'models')
+            logger.info(f"## MODEL SEARCH: Looking ONLY in standard storage directory: {storage_dir}")
+            
+            if not os.path.exists(storage_dir):
+                logger.error(f"## MODEL SEARCH FAILED: Storage directory doesn't exist: {storage_dir}")
+            else:
+                # First try to find a file matching the quote ID
+                if quote_id and quote_id not in ['N/A', 'MISSING', None, '']:
+                    logger.info(f"## MODEL SEARCH: Looking for file with quote ID: {quote_id}")
+                    
+                    # Get all files in the storage directory
+                    all_files = os.listdir(storage_dir)
+                    logger.info(f"## MODEL SEARCH: Found {len(all_files)} files in storage directory")
+                    logger.info(f"## MODEL SEARCH DEBUG: All files: {', '.join(all_files[:20])}{' and more...' if len(all_files) > 20 else ''}")
+                    
+                    # Look for file with this specific quote ID (using more flexible matching)
+                    # First try exact quote ID prefix match
+                    matching_files = [f for f in all_files if f.startswith(f"{quote_id}_")]
+                    
+                    # If no matches with prefix, try more general match
+                    if not matching_files:
+                        matching_files = [f for f in all_files if quote_id in f]
+                        logger.info(f"## MODEL SEARCH: No exact prefix match, found {len(matching_files)} files containing quote ID")
+                    else:
+                        logger.info(f"## MODEL SEARCH: Found {len(matching_files)} files with exact quote ID prefix")
+                        
+                    if matching_files:
+                        # Sort by modification time to get the most recent file
+                        matching_files.sort(key=lambda f: os.path.getmtime(os.path.join(storage_dir, f)), reverse=True)
+                        
+                        # Use the first (most recent) matching file
+                        file_path_to_upload = os.path.join(storage_dir, matching_files[0])
+                        logger.info(f"## MODEL SEARCH SUCCESS: Found file with quote ID {quote_id}: {matching_files[0]}")
+                        model_found = True
+                        
+                        # Update file_name from the actual file
+                        file_name = os.path.basename(file_path_to_upload)
+                        
+                        # Try to extract the original name without the quote ID prefix
+                        if '_' in file_name:
+                            original_name = file_name.split('_', 1)[1]
+                            logger.info(f"## MODEL SEARCH: Original file name appears to be: {original_name}")
+                            file_name = original_name  # Use the original name for the upload
+                    else:
+                        logger.error(f"## MODEL SEARCH FAILED: No file with quote ID {quote_id} found in {storage_dir}")
+                        if all_files:
+                            logger.info(f"## MODEL SEARCH INFO: Available files: {', '.join(all_files[:10])}{' and more...' if len(all_files) > 10 else ''}")
+                            
+                            # Last resort - try to find ANY model file (the most recent one)
+                            try:
+                                stl_files = [f for f in all_files if f.lower().endswith('.stl')]
+                                if stl_files:
+                                    # Sort by modification time and take the most recent
+                                    stl_files.sort(key=lambda f: os.path.getmtime(os.path.join(storage_dir, f)), reverse=True)
+                                    file_path_to_upload = os.path.join(storage_dir, stl_files[0])
+                                    logger.info(f"## MODEL SEARCH LAST RESORT: Found most recent STL file: {stl_files[0]}")
+                                    model_found = True
+                                    file_name = os.path.basename(file_path_to_upload)
+                            except Exception as e:
+                                logger.error(f"## MODEL SEARCH FAILED: Error in last resort search: {e}")
+                else:
+                    logger.error(f"## MODEL SEARCH FAILED: No valid quote ID provided (received: '{quote_id}')")
+                    
+                    # Last resort - try to find ANY model file (the most recent one)
+                    try:
+                        all_files = os.listdir(storage_dir)
+                        stl_files = [f for f in all_files if f.lower().endswith('.stl')]
+                        if stl_files:
+                            # Sort by modification time and take the most recent
+                            stl_files.sort(key=lambda f: os.path.getmtime(os.path.join(storage_dir, f)), reverse=True)
+                            file_path_to_upload = os.path.join(storage_dir, stl_files[0])
+                            logger.info(f"## MODEL SEARCH LAST RESORT: No quote ID, but found most recent STL file: {stl_files[0]}")
+                            model_found = True
+                            file_name = os.path.basename(file_path_to_upload)
+                    except Exception as e:
+                        logger.error(f"## MODEL SEARCH FAILED: Error in last resort search: {e}")
+                    
+            if not model_found:
+                logger.error(f"## MODEL SEARCH RESULT: NO model file found for payment {payment_intent_id}, quote_id: '{quote_id}'")
+            else:
+                logger.info(f"## MODEL SEARCH RESULT: Found model file: {file_path_to_upload}")
+
+            # --- Send Notification (with or without file) ---
+            # Prepare the file name for upload
+            upload_file_name = file_name  # Default to the already-known file name
+            try:
+                if file_path_to_upload:
+                    # Extract the actual filename from the path
+                    actual_file_name = os.path.basename(file_path_to_upload)
+                    logger.info(f"## FILE UPLOAD: Using actual file name: {actual_file_name}")
+                    
+                    # Use both the original file name and quote ID in the file name
+                    # But clean it up to get a nice upload name
+                    if quote_id and quote_id not in actual_file_name:
+                        # Get the extension from the actual file
+                        file_ext = os.path.splitext(actual_file_name)[1]
+                        # If file_name already has an extension, use that base name
+                        if os.path.splitext(file_name)[1]:
+                            base_name = os.path.splitext(file_name)[0]
+                        else:
+                            base_name = file_name
+                            
+                        # Create a clean upload name with the quote ID
+                        upload_file_name = f"{base_name}_QuoteID-{quote_id}{file_ext}"
+                    else:
+                        # If no quote ID or it's already in the name, use a cleaned version of the actual filename
+                        # If the format is quoteId_filename.stl, extract just the filename part
+                        if '_' in actual_file_name and quote_id and actual_file_name.startswith(f"{quote_id}_"):
+                            upload_file_name = actual_file_name.split('_', 1)[1]
+                        else:
+                            upload_file_name = actual_file_name
+                        
+                    logger.info(f"## FILE UPLOAD: Final upload file name: {upload_file_name}")
+                else:
+                    logger.error(f"## FILE UPLOAD: No model file found to upload")
+            except Exception as filename_error:
+                logger.error(f"## FILE UPLOAD ERROR: Error processing file name: {filename_error}")
+                # Just use the original file name if there's an error
+                upload_file_name = file_name
+        except Exception as file_proc_error:
+            logger.error(f"Critical error during file processing: {file_proc_error}")
+            file_path_to_upload = None
+            upload_file_name = file_name if 'file_name' in locals() else "Unknown file"
+        
+        # Do direct synchronous upload to Slack
+        try:
+            logger.info(f"## SLACK: Sending notification to Slack for payment {payment_intent_id}")
+            
+            from slack_sdk import WebClient as SyncWebClient
+            
+            slack_token = getattr(settings, 'slack_bot_token', os.getenv('SLACK_BOT_TOKEN'))
+            channel_id = getattr(settings, 'slack_upload_channel_id', os.getenv('SLACK_UPLOAD_CHANNEL_ID'))
+            
+            if not slack_token or not channel_id:
+                logger.error("## SLACK ERROR: Missing Slack token or channel ID")
+                return
+                
+            # Create Slack client
+            slack_client = SyncWebClient(token=slack_token)
+            
+            # If we have a model file, upload it first
+            if file_path_to_upload and os.path.exists(file_path_to_upload):
+                logger.info(f"## SLACK: Uploading file: {file_path_to_upload} as {upload_file_name}")
+                
+                try:
+                    # Verify file size to make sure it's not empty (Slack rejects empty files)
+                    file_size = os.path.getsize(file_path_to_upload)
+                    logger.info(f"## SLACK: File size is {file_size} bytes")
+                    
+                    if file_size == 0:
+                        logger.error(f"## SLACK ERROR: File is empty, cannot upload to Slack")
+                    else:
+                        # Read file into memory
+                        with open(file_path_to_upload, 'rb') as file_content:
+                            file_data = file_content.read()
+                            
+                            # Add file extension if it doesn't have one
+                            if '.' not in upload_file_name:
+                                upload_file_name = f"{upload_file_name}.stl"
+                                logger.info(f"## SLACK: Added .stl extension to filename: {upload_file_name}")
+                            
+                            # Upload file to Slack
+                            logger.info(f"## SLACK: Attempting to upload file {upload_file_name} ({file_size} bytes)")
+                            upload_response = slack_client.files_upload_v2(
+                                file=file_data,
+                                filename=upload_file_name,
+                                channel=channel_id,
+                                initial_comment=f"🧱 3D Model for Order {payment_intent_id}{quote_id and f' (Quote {quote_id})' or ''}"
+                            )
+                            
+                            # Log the full response for debugging
+                            logger.info(f"## SLACK DEBUG: Upload response: {upload_response}")
+                            
+                            file_id = upload_response.get('file', {}).get('id')
+                            logger.info(f"## SLACK SUCCESS: File uploaded, ID: {file_id}")
+                except Exception as upload_error:
+                    logger.error(f"## SLACK ERROR: Failed to upload file: {upload_error}")
+                    
+                    # Try a fallback approach with a different method
+                    try:
+                        logger.info(f"## SLACK: Trying fallback upload method")
+                        
+                        # Use requests directly to upload the file
+                        with open(file_path_to_upload, 'rb') as file_content:
+                            files = {'file': (upload_file_name, file_content)}
+                            data = {
+                                'token': slack_token,
+                                'channels': channel_id,
+                                'initial_comment': f"🧱 3D Model for Order {payment_intent_id}{quote_id and f' (Quote {quote_id})' or ''}"
+                            }
+                            response = requests.post('https://slack.com/api/files.upload', data=data, files=files)
+                            
+                            if response.status_code == 200 and response.json().get('ok'):
+                                logger.info(f"## SLACK SUCCESS: File uploaded via fallback method")
+                            else:
+                                logger.error(f"## SLACK ERROR: Fallback upload failed: {response.text}")
+                    except Exception as fallback_error:
+                        logger.error(f"## SLACK ERROR: Fallback upload method failed: {fallback_error}")
+            else:
+                logger.error("## SLACK WARNING: No file to upload")
+            
+            # Send the message with order details
+            try:
+                message_response = slack_client.chat_postMessage(
+                    channel=channel_id,
+                    blocks=slack_blocks,
+                    text=slack_fallback_text
+                )
+                
+                message_ts = message_response.get('ts')
+                logger.info(f"## SLACK SUCCESS: Message sent, timestamp: {message_ts}")
+            except Exception as message_error:
+                logger.error(f"## SLACK ERROR: Failed to send message: {message_error}")
+                
+                # Try a simple plain text message as fallback
+                try:
+                    slack_client.chat_postMessage(
+                        channel=channel_id,
+                        text=f"Payment received: {payment_intent_id}" + 
+                             f"\nQuote ID: {quote_id or 'Unknown'}" +
+                             f"\nCustomer: {customer_name}" +
+                             f"\nFile: {file_name}"
+                    )
+                    logger.info("## SLACK: Sent fallback plain text message")
+                except:
+                    logger.critical("## SLACK CRITICAL: ALL notification attempts failed")
+                
+        except Exception as slack_error:
+            logger.error(f"## SLACK ERROR: Failed to send notification: {slack_error}")
 
         # NOTE: File path cleanup is now handled *inside* send_slack_notification's finally block
 

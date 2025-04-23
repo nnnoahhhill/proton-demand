@@ -18,19 +18,21 @@ export interface ContactSubmission {
  */
 export interface OrderNotification {
   orderId: string;
+  quoteId?: string; // Added quote ID
   customerName: string;
   customerEmail: string;
   items: Array<{
     id: string;
     fileName: string;
-    process: string;
+    process: string; 
+    technology?: string; // Added technology field (FDM, SLA, SLS)
     material: string;
     finish: string;
     quantity: number;
-    price: number;
+    price?: number; // Made price optional as we shouldn't include it in Slack messages
   }>;
-  totalPrice: number;
-  currency: string;
+  totalPrice?: number; // Made optional as we shouldn't include it in Slack messages
+  currency?: string;   // Made optional
   specialInstructions?: string;
   shippingAddress: {
     line1: string;

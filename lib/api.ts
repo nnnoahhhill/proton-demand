@@ -11,6 +11,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8
 export interface QuoteRequest {
   modelFile: File;
   process: '3D Printing' | 'CNC Machining' | 'Sheet Metal';
+  technology?: 'FDM' | 'SLA' | 'SLS'; // Added for 3D printing technologies
   material: string;
   finish: string;
   drawingFile?: File;
@@ -113,6 +114,11 @@ export async function getQuote(params: QuoteRequest): Promise<QuoteResponse> {
     formData.append('process', params.process);
     formData.append('material_id', params.material);
     
+    // Add technology if provided
+    if (params.technology) {
+      formData.append('technology', params.technology);
+    }
+    
     if (params.drawingFile) {
       formData.append('drawing_file', params.drawingFile);
     }
@@ -120,6 +126,7 @@ export async function getQuote(params: QuoteRequest): Promise<QuoteResponse> {
     // Log FormData creation
     console.log('Created FormData with:', 
       'process=', params.process, 
+      'technology=', params.technology || 'not specified',
       'material_id=', params.material,
       'modelFile=', params.modelFile.name
     );

@@ -41,6 +41,7 @@ export default function NewQuoteForm() {
   const [showModelControls, setShowModelControls] = useState(true);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
+  const [quantity, setQuantity] = useState<number>(1);
 
   // Get cart context
   const { addItem } = useCart();
@@ -55,12 +56,25 @@ export default function NewQuoteForm() {
     ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
     : null;
 
+  // Define 3D printing technology type for stricter typing
+  type PrintTechnology = 'FDM' | 'SLA' | 'SLS';
+
+  // State for 3D printing technology
+  const [printTechnology, setPrintTechnology] = useState<PrintTechnology | ''>('');
+
   // Handle process change
   const handleProcessChange = (value: ProcessType) => {
     setManufacturingProcess(value);
     // Reset material and finish when process changes
     setMaterial('');
     setFinish('');
+  };
+
+  // Handle 3D printing technology change
+  const handleTechnologyChange = (value: PrintTechnology | '') => {
+    setPrintTechnology(value);
+    // Reset material when technology changes
+    setMaterial('');
   };
 
   // Handle model file selection
@@ -160,6 +174,11 @@ export default function NewQuoteForm() {
       return;
     }
 
+    if (!printTechnology) {
+      setError('Please select a printing technology (FDM, SLA, or SLS)');
+      return;
+    }
+
     if (!material) {
       setError('Please select a material');
       return;
@@ -179,6 +198,7 @@ export default function NewQuoteForm() {
 
     console.log("Submitting form with:",
       "process=", manufacturingProcess,
+      "technology=", printTechnology,
       "material=", material,
       "finish=", finish,
       "modelFile=", modelFile.name,
@@ -200,6 +220,7 @@ export default function NewQuoteForm() {
       // First attempt
       let quoteResponse = await getQuote({
         process: manufacturingProcess,
+        technology: manufacturingProcess === '3D Printing' ? printTechnology : undefined,
         material,
         finish: standardFinish,
         modelFile,
@@ -221,6 +242,7 @@ export default function NewQuoteForm() {
         // Second attempt
         quoteResponse = await getQuote({
           process: manufacturingProcess,
+          technology: manufacturingProcess === '3D Printing' ? printTechnology : undefined,
           material,
           finish: standardFinish,
           modelFile,
@@ -262,7 +284,77 @@ export default function NewQuoteForm() {
   // Add to cart
   const handleAddToCart = () => {
     if (response && response.success && modelFile) {
-      addItem(response, modelFile.name);
+      // Store model file in localStorage for later use in order processing
+      if (window && localStorage) {
+        try {
+          console.log("DEBUG: Storing model file info for quote:", response.quote_id);
+          // Store minimal file info for the cart
+          localStorage.setItem(`model_file_${response.quote_id}`, JSON.stringify({
+            fileName: modelFile.name,
+            fileType: modelFile.name.split('.').pop()?.toLowerCase(),
+            quoteId: response.quote_id,
+            technology: printTechnology
+          }));
+          
+          // Also store a reference to the file name for sending to Slack
+          // We'll avoid storing the full file blob in localStorage due to quota limitations
+          console.log(`DEBUG: File is too large for localStorage, storing metadata only`);
+          console.log(`DEBUG: Original file name: ${modelFile.name}, size: ${modelFile.size} bytes`);
+          
+          // Store additional metadata about the file
+          const fileMetadata = {
+            fileName: modelFile.name,
+            fileSize: modelFile.size,
+            fileType: modelFile.type || 'model/stl',
+            lastModified: modelFile.lastModified,
+            quoteId: response.quote_id,
+            technology: printTechnology,
+            // Store a flag indicating we need to get the file from the server instead
+            serverStored: true
+          };
+          
+          localStorage.setItem(`model_file_metadata_${response.quote_id}`, JSON.stringify(fileMetadata));
+          console.log(`DEBUG: Stored model file metadata for quote ${response.quote_id}`);
+          
+          // We'll need to upload the file to the server immediately instead
+          try {
+            // Create a form data object to send the file
+            const formData = new FormData();
+            formData.append('file', modelFile);
+            formData.append('quoteId', response.quote_id);
+            formData.append('technology', printTechnology || 'unknown');
+            
+            // Send the file to the server
+            console.log(`DEBUG: Uploading model file to server for quote ${response.quote_id}`);
+            fetch('/api/upload-model', {
+              method: 'POST',
+              body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+              console.log(`DEBUG: Server upload response:`, data);
+              // Update metadata with server path
+              if (data.success && data.filePath) {
+                const updatedMetadata = {
+                  ...fileMetadata,
+                  serverFilePath: data.filePath
+                };
+                localStorage.setItem(`model_file_metadata_${response.quote_id}`, JSON.stringify(updatedMetadata));
+              }
+            })
+            .catch(error => {
+              console.error(`DEBUG: Error uploading file to server:`, error);
+            });
+          } catch (uploadError) {
+            console.error(`DEBUG: Error preparing file upload:`, uploadError);
+          }
+        } catch (e) {
+          console.error('Error storing model file info:', e);
+        }
+      }
+      
+      // Pass quantity to addItem
+      addItem(response, modelFile.name, quantity);
       setAddedToCart(true);
       setCheckoutError('');
     }
@@ -350,6 +442,7 @@ export default function NewQuoteForm() {
   // Reset the form
   const handleReset = () => {
     setManufacturingProcess('3D Printing');
+    setPrintTechnology('');
     setMaterial('');
     setFinish('standard'); // Keep standard finish
     setModelFile(null);
@@ -358,6 +451,7 @@ export default function NewQuoteForm() {
     setError('');
     setAddedToCart(false);
     setCheckoutError('');
+    setQuantity(1);
 
     // Reset file inputs
     if (modelFileRef.current) modelFileRef.current.value = '';
@@ -485,13 +579,43 @@ export default function NewQuoteForm() {
             <div className="mb-6 border border-[#5fe496] bg-[#5fe496]/10 p-4">
               <h3 className="text-xl font-andale mb-2 text-[#5fe496]">Quote Generated!</h3>
               <div className="space-y-2 text-white">
-                <p><span className="font-medium">Quote ID:</span> {response.quote_id}</p>
-                <p><span className="font-medium">Price:</span> ${response.customer_price?.toFixed(2)} {response.material_info?.currency || 'USD'}</p>
-                <p><span className="font-medium">Lead Time:</span> ~10 business days</p>
-                <p><span className="font-medium">Process:</span> {response.process}</p>
-                <p><span className="font-medium">Material:</span> {response.material_info?.name || 'N/A'}</p>
-                <p><span className="font-medium">Finish:</span> Standard High-Quality</p>
+                <div className="grid grid-template-columns-fixed gap-y-2">
+                  <p className="font-medium whitespace-nowrap">Quote ID:</p>
+                  <p>{response.quote_id}</p>
+                  
+                  <p className="font-medium whitespace-nowrap">Price:</p>
+                  <p className="whitespace-nowrap">
+                    ${(response.customer_price! * quantity).toFixed(2)} {response.material_info?.currency || 'USD'}
+                    {quantity > 1 && <span className="ml-2 text-white/60">(${response.customer_price?.toFixed(2)}/ea)</span>}
+                  </p>
+                  
+                  <p className="font-medium whitespace-nowrap">Quantity:</p>
+                  <p>{quantity}</p>
+                  
+                  <p className="font-medium whitespace-nowrap">Lead Time:</p>
+                  <p>~10 business days</p>
+                  
+                  <p className="font-medium whitespace-nowrap">Process:</p>
+                  <p>{response.process}</p>
+                  
+                  <p className="font-medium whitespace-nowrap">Technology:</p>
+                  <p>{response.technology || printTechnology}</p>
+                  
+                  <p className="font-medium whitespace-nowrap">Material:</p>
+                  <p>{response.material_info?.name || 'N/A'}</p>
+                  
+                  <p className="font-medium whitespace-nowrap">Finish:</p>
+                  <p>Standard High-Quality</p>
+                </div>
               </div>
+
+              <style jsx>{`
+                .grid-template-columns-fixed {
+                  display: grid;
+                  grid-template-columns: max-content 1fr;
+                  column-gap: 1.75rem;
+                }
+              `}</style>
             </div>
 
             <div className="mt-4 flex justify-center items-center space-x-4">
@@ -572,23 +696,16 @@ export default function NewQuoteForm() {
             <div className="space-y-4 flex-grow">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="block text-sm font-medium text-white font-avenir">Process</label>
+                  <label className="block text-sm font-medium text-white font-avenir">Technology</label>
                   <select
-                    value={manufacturingProcess}
-                    onChange={(e) => handleProcessChange(e.target.value as ProcessType)}
+                    value={printTechnology}
+                    onChange={(e) => handleTechnologyChange(e.target.value as PrintTechnology)}
                     className="w-full bg-[#0A1525] border border-[#1E2A45] text-white p-2 rounded-none focus:outline-none focus:ring-1 focus:ring-[#5fe496] font-avenir"
                   >
-                    <option value="" disabled>Select process</option>
-                    {/* Use values matching backend enum */}
-                    <option value="3D Printing">3D Printing (All Types)</option> 
-                    {/* Keep specific technology selection separate for now, 
-                        or adjust backend to accept FDM/SLA/SLS directly if needed */}
-                    {/* <option value="3DP_FDM">FDM</option>
-                    <option value="3DP_SLA">SLA</option>
-                    <option value="3DP_SLS">SLS</option> */}
-                    {/* Add CNC/Sheet Metal when backend supports them fully */}
-                    {/* <option value="CNC Machining">CNC Machining</option> */}
-                    {/* <option value="Sheet Metal">Sheet Metal</option> */}
+                    <option value="" disabled>Select technology</option>
+                    <option value="FDM">FDM</option>
+                    <option value="SLA">SLA</option>
+                    <option value="SLS">SLS</option>
                   </select>
                 </div>
 
@@ -598,41 +715,33 @@ export default function NewQuoteForm() {
                     value={material}
                     onChange={(e) => setMaterial(e.target.value)}
                     className="w-full bg-[#0A1525] border border-[#1E2A45] text-white p-2 rounded-none focus:outline-none focus:ring-1 focus:ring-[#5fe496] font-avenir"
+                    disabled={!printTechnology}
                   >
                     <option value="" disabled>Select material</option>
-                    {/* Logic might need adjustment based on how materials are fetched/filtered for the chosen *process* */}
-                    {/* Example: Fetch materials using /materials/{manufacturingProcess} */}
-                    {/* For now, let's keep the original material options, 
-                        assuming the backend /quote can handle any material ID if the process is '3D Printing' */}
-                    {/* If specific technology (FDM/SLA/SLS) is needed, the UI/backend interaction needs rework */}
-                    {/* FDM Materials */}
-                    {/* Assuming backend uses fdm_<material>_standard format based on error message */}
-                    <option value="fdm_pla_standard">PLA</option>
-                    <option value="fdm_abs_standard">ABS</option>
-                    <option value="fdm_petg_standard">PETG</option>
-                    <option value="fdm_tpu_flexible">TPU (Flexible)</option>
-                    {/* Note: Backend error lists 'fdm_nylon12_standard', UI had 'nylon_12' */}
-                    <option value="fdm_nylon12_standard">Nylon 12 (FDM)</option> 
-                    <option value="fdm_asa_standard">ASA</option>
-                    {/* SLS Materials - Use IDs from backend error message */}
-                    <option value="sls_nylon12_white">Nylon 12 - White (SLS)</option>
-                    <option value="sls_nylon12_black">Nylon 12 - Black (SLS)</option>
-                    {/* SLA Materials - Use IDs from backend error message */}
-                    <option value="sla_resin_standard">Standard Resin (SLA - Clear)</option>
-                    <option value="sla_resin_tough">Tough Resin (SLA)</option> 
                     
-                    {/* {manufacturingProcess === '3D Printing' && (
+                    {printTechnology === 'FDM' && (
                       <>
-                        {/* Need to fetch materials based on the selected PROCESS, not specific tech here * /}
-                        <option value="pla">PLA</option>
-                        <option value="abs">ABS</option>
-                        <option value="petg">PETG</option>
-                        <option value="tpu">TPU (Flexible)</option>
-                        <option value="nylon12-white">Nylon 12 - White</option>
-                        <option value="nylon12-black">Nylon 12 - Black</option>
-                        <option value="standard-resin">Standard Resin</option>
+                        <option value="fdm_pla_standard">PLA</option>
+                        <option value="fdm_abs_standard">ABS</option>
+                        <option value="fdm_petg_standard">PETG</option>
+                        <option value="fdm_tpu_flexible">TPU (Flexible)</option>
+                        <option value="fdm_nylon12_standard">Nylon 12</option>
+                        <option value="fdm_asa_standard">ASA</option>
                       </>
-                    )} */}
+                    )}
+                    
+                    {printTechnology === 'SLS' && (
+                      <>
+                        <option value="sls_nylon12_white">Nylon 12 White</option>
+                        <option value="sls_nylon12_black">Nylon 12 Black</option>
+                      </>
+                    )}
+                    
+                    {printTechnology === 'SLA' && (
+                      <>
+                        <option value="sla_resin_standard">Standard Resin</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -643,7 +752,8 @@ export default function NewQuoteForm() {
                   <input
                     type="number"
                     min="1"
-                    defaultValue="1"
+                    value={quantity}
+                    onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                     className="w-full bg-[#0A1525] border border-[#1E2A45] text-white p-2 rounded-none focus:outline-none focus:ring-1 focus:ring-[#5fe496] font-avenir"
                   />
                 </div>

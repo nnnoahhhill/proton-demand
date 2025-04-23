@@ -144,22 +144,96 @@ export default function CheckoutPage() {
       // Generate a random order number
       const orderNumber = `ORD-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
 
+      // Get model files for the notification
+      // We need to retrieve the actual STL files for each quote
+      let modelFilesForNotification: File[] = [];
+      
+      try {
+        console.log("DEBUG: Starting to retrieve model files for Slack notification");
+        for (const item of items) {
+          if (localStorage && typeof window !== 'undefined') {
+            // First check for basic file metadata
+            const storedFileData = localStorage.getItem(`model_file_${item.id}`);
+            console.log(`DEBUG: Retrieved stored file data for item ${item.id}:`, storedFileData);
+            
+            // Then check for enhanced metadata (from our new storage approach)
+            const storedMetadata = localStorage.getItem(`model_file_metadata_${item.id}`);
+            console.log(`DEBUG: Retrieved stored file metadata for item ${item.id}:`, storedMetadata);
+            
+            if (storedFileData || storedMetadata) {
+              try {
+                // Use enhanced metadata if available, otherwise fallback to basic data
+                const fileData = storedMetadata ? JSON.parse(storedMetadata) : JSON.parse(storedFileData || '{}');
+                console.log(`DEBUG: Parsed file data for ${item.id}:`, fileData);
+                
+                // Create a file with the correct name and quoteId
+                const fileName = fileData.fileName || item.fileName;
+                console.log(`DEBUG: Creating placeholder file with name ${fileName} and quoteId ${item.id}`);
+                
+                // Since we can't reliably store large files in localStorage, we create a small
+                // placeholder file with the correct name. The actual file will be retrieved
+                // from the server storage in the Slack notification handler.
+                const placeholderContent = new Uint8Array([
+                  // This is an ASCII string embedded in the file to indicate it's a placeholder
+                  // that should be replaced with a server-side file
+                  ...Array.from("SERVER_STORED_FILE:"+item.id).map(c => c.charCodeAt(0))
+                ]);
+                
+                const modelFile = new File(
+                  [placeholderContent],
+                  fileName,
+                  { 
+                    type: fileData.fileType || 'model/stl',
+                    lastModified: fileData.lastModified || Date.now()
+                  }
+                );
+                
+                // Add a special property to indicate this is a server-stored file
+                // This will be checked in the Slack notification handler
+                Object.defineProperty(modelFile, 'serverStored', {
+                  value: true,
+                  writable: false
+                });
+                
+                // Also add the quote ID for reference
+                Object.defineProperty(modelFile, 'quoteId', {
+                  value: item.id,
+                  writable: false
+                });
+                
+                console.log(`DEBUG: Adding placeholder file to notification:`, modelFile.name, modelFile.size);
+                modelFilesForNotification.push(modelFile);
+              } catch (e) {
+                console.error('Error parsing stored file data:', e);
+              }
+            } else {
+              console.log(`DEBUG: No stored file data found for item ${item.id}`);
+            }
+          }
+        }
+        console.log(`DEBUG: Total model files for notification: ${modelFilesForNotification.length}`);
+      } catch (e) {
+        console.error('Error getting model files for notification:', e);
+      }
+      
       // Send order notification to Slack
       await sendOrderNotification({
         orderId: orderNumber,
+        // Add quote IDs from cart items
+        quoteId: items.length === 1 ? items[0].id : undefined, // Use first item's ID if only one item
         customerName: formData.fullName,
         customerEmail: formData.email,
         items: items.map(item => ({
           id: item.id,
           fileName: item.fileName,
           process: item.process,
+          // Add technology if we have it
+          technology: item.metadata?.technology || undefined,
           material: item.material,
           finish: item.finish,
           quantity: item.quantity,
-          price: item.price
+          // We're not including price in Slack messages
         })),
-        totalPrice,
-        currency: 'USD',
         specialInstructions: formData.specialInstructions,
         shippingAddress: {
           line1: formData.address,
@@ -167,7 +241,11 @@ export default function CheckoutPage() {
           state: formData.state,
           postal_code: formData.zipCode,
           country: formData.country
-        }
+        },
+        // Add model files if we have them
+        modelFiles: modelFilesForNotification.length > 0 ? modelFilesForNotification : undefined,
+        // Set the order date
+        orderDate: new Date()
       });
 
       // Simulate processing time

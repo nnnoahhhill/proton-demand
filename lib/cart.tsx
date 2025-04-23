@@ -16,12 +16,17 @@ export interface CartItem {
   addedAt: Date;
   quantity: number;
   weightInKg: number; // Weight in kg for shipping calculation
+  metadata?: {
+    technology?: string; // FDM, SLA, SLS
+    originalFileName?: string;
+    [key: string]: any;
+  };
 }
 
 // Define cart context interface
 interface CartContextType {
   items: CartItem[];
-  addItem: (quote: QuoteResponse, fileName: string) => void;
+  addItem: (quote: QuoteResponse, fileName: string, quantity?: number) => void;
   removeItem: (id: string) => void;
   updateQuantity: (id: string, quantity: number) => void;
   clearCart: () => void;
@@ -82,12 +87,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items, isInitialized]);
 
   // Add item to cart
-  const addItem = useCallback((quote: QuoteResponse, fileName: string) => {
+  const addItem = useCallback((quote: QuoteResponse, fileName: string, quantity: number = 1) => {
     // Use customer_price instead of price
     if (!quote.success || !quote.customer_price) {
         console.error("Cannot add item to cart: Quote was not successful or price is missing.", quote);
         return;
     }
+
+    // Ensure quantity is at least 1
+    const itemQuantity = Math.max(1, quantity);
 
     // Calculate weight in kg using cost_estimate if available
     const weightInGrams = quote.cost_estimate?.material_weight_g;
@@ -97,6 +105,20 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const estimatedWeightInKg = weightInGrams
       ? weightInGrams / 1000
       : volumeInCm3 * 0.00105; // Convert cm³ to kg using assumed density
+
+    // Get technology from localStorage if available
+    let technology = undefined;
+    try {
+      if (typeof window !== 'undefined' && localStorage) {
+        const storedFileData = localStorage.getItem(`model_file_${quote.quote_id}`);
+        if (storedFileData) {
+          const fileData = JSON.parse(storedFileData);
+          technology = fileData.technology;
+        }
+      }
+    } catch (e) {
+      console.error('Error getting technology from localStorage:', e);
+    }
 
     const newItem: CartItem = {
       id: quote.quote_id, // Use quote_id instead of quoteId
@@ -109,25 +131,30 @@ export function CartProvider({ children }: { children: ReactNode }) {
       leadTimeInDays: 10, // TODO: Get this from quote response if available later
       fileName,
       addedAt: new Date(),
-      quantity: 1,
+      quantity: itemQuantity,
       // Use calculated weight, ensuring it's a number
       weightInKg: typeof estimatedWeightInKg === 'number' ? estimatedWeightInKg : 0,
+      // Add metadata including technology if available
+      metadata: {
+        technology: technology || quote.technology, // Use either stored or response technology
+        originalFileName: fileName,
+      }
     };
 
-    console.log("Adding item to cart:", newItem);
+    console.log(`Adding item to cart: ${newItem.id} with quantity ${itemQuantity}`);
 
     // Check if item already exists
     const existingItemIndex = items.findIndex(item => item.id === newItem.id);
 
     if (existingItemIndex >= 0) {
-      // Update existing item quantity (simple increment for now)
+      // Update existing item quantity
       const updatedItems = [...items];
-      updatedItems[existingItemIndex].quantity += 1;
-      console.log(`Updated quantity for item ${newItem.id} to ${updatedItems[existingItemIndex].quantity}`);
+      updatedItems[existingItemIndex].quantity = itemQuantity;
+      console.log(`Updated quantity for item ${newItem.id} to ${itemQuantity}`);
       setItems(updatedItems);
     } else {
       // Add new item
-      console.log(`Adding new item ${newItem.id} to cart.`);
+      console.log(`Adding new item ${newItem.id} to cart with quantity ${itemQuantity}`);
       setItems(prevItems => [...prevItems, newItem]);
     }
   }, [items]);

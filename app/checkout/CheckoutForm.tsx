@@ -83,6 +83,23 @@ export default function CheckoutForm({
         price: item.price 
       }));
 
+      // Collect quote IDs from cart items
+      const quoteIds = items.map(item => item.id).filter(Boolean);
+      
+      // Collect metadata from the first item (we currently only handle one item)
+      const firstItem = items[0];
+      const technology = firstItem.metadata?.technology || '';
+      const material = firstItem.material || '';
+      
+      // Get quote ID for the main metadata (use first item's ID)
+      const primaryQuoteId = firstItem.id || '';
+      
+      // Get file name for the main metadata
+      const primaryFileName = firstItem.fileName || 'Unknown File';
+      
+      console.log(`DEBUG: Sending payment with quoteId: ${primaryQuoteId}, fileName: ${primaryFileName}`);
+      console.log(`DEBUG: Technology: ${technology}, material: ${material}, quantity: ${firstItem.quantity}`);
+      
       const piResponse = await createPaymentIntent({
         items: orderItems,
         currency: 'usd',
@@ -90,6 +107,19 @@ export default function CheckoutForm({
         metadata: { 
             customerName: name,
             cartItemIds: JSON.stringify(items.map(i => i.id)),
+            quoteIds: JSON.stringify(quoteIds), // Add quote IDs to metadata
+            
+            // Add individual item metadata for easier webhook access
+            quote_id: primaryQuoteId,  // This is critical - Stripe webhook looks for "quote_id"
+            file_name: primaryFileName, // This is critical - Stripe webhook looks for "file_name"
+            
+            // Add detailed information
+            technology: technology,
+            material: material,
+            quantity: String(firstItem.quantity || 1),
+            
+            // Add a description that includes all key info for fallback
+            description: `Quote ${primaryQuoteId} - ${primaryFileName} - ${technology} ${material}`
          },
         couponCode: couponCode || undefined  // Only include if provided
       });
@@ -128,6 +158,7 @@ export default function CheckoutForm({
 
       if (paymentIntent?.status === 'succeeded') {
         console.log('PaymentIntent succeeded:', paymentIntent);
+        console.log('Payment succeeded with quotes:', JSON.stringify(quoteIds));
         onPaymentSuccess(paymentIntent.id);
         clearCart(); 
       } else {
