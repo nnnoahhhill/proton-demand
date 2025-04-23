@@ -91,8 +91,8 @@ export default function NewQuoteForm() {
 
       // Check file extension
       const fileExtension = file.name.split('.').pop()?.toLowerCase();
-      if (!fileExtension || !['stl', 'step', 'stp'].includes(fileExtension)) {
-        setError('Please upload a valid .stl or .step file.');
+      if (!fileExtension || !['stl', 'step', 'stp', 'obj'].includes(fileExtension)) {
+        setError('Please upload a valid 3D model file (.stl, .step, .stp, or .obj).');
         setModelFile(null);
         return;
       }
@@ -478,17 +478,13 @@ export default function NewQuoteForm() {
       <div>
         <div className="border border-[#1E2A45] bg-[#0C1F3D]/50 p-4 mb-4 h-full flex flex-col">
           <h2 className="text-xl font-andale mb-4 text-white">Upload Your 3D Model</h2>
-          <p className="text-white/70 mb-4 font-avenir">
-            Upload your STL or STEP file for 3D printing
-          </p>
 
           <div className="flex-grow flex flex-col">
             <div className="flex-grow">
-              <label className="block text-sm font-medium text-white font-avenir mb-2">Upload 3D Model</label>
-              <div className="flex items-center justify-center w-full h-[calc(100%-30px)]">
+              <div className="flex items-center justify-center w-full h-[calc(100%-10px)]">
                 {modelFile ? (
                   <div className="w-full h-full">
-                    <div className="relative h-[300px]">
+                    <div className="relative h-[400px]">
                       <ModelViewer
                         file={modelFile}
                         autoRotate={!showModelControls}

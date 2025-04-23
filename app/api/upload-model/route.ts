@@ -28,6 +28,21 @@ export async function POST(req: NextRequest) {
       );
     }
     
+    // Check file extension
+    const fileName = file.name;
+    const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
+    console.log(`DEBUG: Received file with extension: ${fileExtension}`);
+    
+    // Check if it's a supported file type (STL, STEP, STP, OBJ)
+    const supportedExtensions = ['stl', 'step', 'stp', 'obj'];
+    if (!supportedExtensions.includes(fileExtension)) {
+      console.error(`DEBUG: Unsupported file extension: ${fileExtension}`);
+      return NextResponse.json(
+        { success: false, error: `Unsupported file type: ${fileExtension}. Supported types are: ${supportedExtensions.join(', ')}` },
+        { status: 400 }
+      );
+    }
+    
     // Get the quote ID
     const quoteId = formData.get('quoteId') as string;
     if (!quoteId) {

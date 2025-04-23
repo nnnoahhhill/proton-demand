@@ -20,6 +20,7 @@ const nextConfig = {
     webpackBuildWorker: true,
     parallelServerBuildTraces: true,
     parallelServerCompiles: true,
+    asyncWebAssembly: true,
   },
   // Configure large body size limit for API routes
   serverRuntimeConfig: {
@@ -40,6 +41,33 @@ const nextConfig = {
         ],
       },
     ];
+  },
+
+  // Add webpack config
+  webpack: (config, { isServer }) => {
+    // Add WASM support using experiments
+    config.experiments = { ...config.experiments, asyncWebAssembly: true, layers: true }; // layers might be needed by some WASM setups
+
+    // Add fallback for node paths for client-side bundles
+    // occt-import-js might implicitly depend on these, better to provide fallbacks
+    config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false, // fs cannot be polyfilled client-side
+        path: false, // path cannot be polyfilled client-side
+        // crypto: false, // uncomment if needed
+      };
+
+    // Modify rules for WASM files
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'asset/resource', // Treat WASM files as assets
+      generator: {
+          filename: 'static/wasm/[name].[hash][ext]', // Output WASM to static folder
+      }
+    });
+
+    // Important: return the modified config
+    return config;
   },
 }
 

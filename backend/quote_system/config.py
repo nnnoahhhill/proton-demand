@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     )
 
     # Pricing Configuration
-    markup_factor: float = 1.5
-    print_time_cost_per_hour: float = 3.0
+    markup_factor: float = 1.7
+    print_time_cost_per_hour: float = 4.0
 
     # External Tool Paths
     # If None, the slicer module will attempt auto-detection.

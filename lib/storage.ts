@@ -156,11 +156,16 @@ export async function saveModelFileToFilesystem(
     const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
     console.log(`DEBUG: File extension: ${fileExtension}`);
     
-    // Allow STL files even if not explicitly in the valid types
-    const isValidType = VALID_MODEL_TYPES.includes(fileExtension) || fileExtension === 'stl';
+    // Check if file type is valid - supports STL, STEP, STP, OBJ
+    // Make sure we're case-insensitive in our checks
+    const validExtensions = [...VALID_MODEL_TYPES, 'stl', 'step', 'stp', 'obj'];
+    const isValidType = validExtensions.includes(fileExtension.toLowerCase());
+    
     if (!isValidType) {
       console.error(`DEBUG: Invalid file type: ${fileExtension}`);
       throw new Error(`Invalid file type: ${fileExtension}. Supported types: ${VALID_MODEL_TYPES.join(', ')}`);
+    } else {
+      console.log(`DEBUG: Valid file type detected: ${fileExtension}`);
     }
 
     // Create a filename with the quote ID
