@@ -31,6 +31,9 @@ export function Navigation() {
             <Link href="/about-us" className="text-sm font-andale hover:text-[#F46036] transition-colors">
               About Us
             </Link>
+            <Link href="/contact" className="text-sm font-andale hover:text-[#F46036] transition-colors">
+              Contact
+            </Link>
             <div className="flex items-center space-x-6">
               <CartIcon />
               <GlowButton asChild>
@@ -63,6 +66,13 @@ export function Navigation() {
               onClick={() => setIsOpen(false)}
             >
               About Us
+            </Link>
+            <Link
+              href="/contact"
+              className="text-sm font-andale hover:text-[#F46036] transition-colors"
+              onClick={() => setIsOpen(false)}
+            >
+              Contact
             </Link>
             <Link
               href="/checkout"

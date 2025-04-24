@@ -1,0 +1,82 @@
+[
+  {
+    "id": "fdm_pla_standard",
+    "name": "PLA (Standard)",
+    "process": "3D Printing",
+    "technology": "FDM",
+    "cost_per_kg": 20.0, 
+    "density_g_cm3": 1.27 
+  },
+  {
+    "id": "fdm_abs_standard",
+    "name": "ABS (Standard)",
+    "process": "3D Printing",
+    "technology": "FDM",
+    "cost_per_kg": 24.0, 
+    "density_g_cm3": 1.05 
+  },
+  {
+    "id": "fdm_nylon12_standard",
+    "name": "Nylon 12 (Standard)",
+    "process": "3D Printing",
+    "technology": "FDM",
+    "cost_per_kg": 70.0, 
+    "density_g_cm3": 1.025 
+  },
+  {
+    "id": "fdm_asa_standard",
+    "name": "ASA (Standard)",
+    "process": "3D Printing",
+    "technology": "FDM",
+    "cost_per_kg": 31.5, 
+    "density_g_cm3": 1.06 
+  },
+  {
+    "id": "fdm_petg_standard",
+    "name": "PETG (Standard)",
+    "process": "3D Printing",
+    "technology": "FDM",
+    "cost_per_kg": 25.0, 
+    "density_g_cm3": 1.28 
+  },
+  {
+    "id": "fdm_tpu_flexible",
+    "name": "TPU (Flexible)",
+    "process": "3D Printing",
+    "technology": "FDM",
+    "cost_per_kg": 47.5, 
+    "density_g_cm3": 1.23 
+  },
+  {
+    "id": "sla_resin_standard",
+    "name": "Standard Resin",
+    "process": "3D Printing",
+    "technology": "SLA",
+    "cost_per_liter": 75.0, 
+    "density_g_cm3": 1.15 
+  },
+  {
+    "id": "sla_resin_tough", 
+    "name": "Tough Resin",
+    "process": "3D Printing",
+    "technology": "SLA",
+    "cost_per_liter": 90.0, 
+    "density_g_cm3": 1.18 
+  },
+  {
+    "id": "sls_nylon12_white",
+    "name": "Nylon 12 (White)",
+    "process": "3D Printing",
+    "technology": "SLS",
+    "cost_per_kg": 100.0, 
+    "density_g_cm3": 0.975 
+  },
+  {
+    "id": "sls_nylon12_black",
+    "name": "Nylon 12 (Black)",
+    "process": "3D Printing",
+    "technology": "SLS",
+    "cost_per_kg": 105.0, 
+    "density_g_cm3": 0.975 
+  }
+] 

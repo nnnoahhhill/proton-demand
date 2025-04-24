@@ -1,0 +1,30 @@
+[
+    {
+        "id": "aluminum_6061",
+        "name": "Aluminum 6061-T6",
+        "process": "CNC Machining",
+        "density_g_cm3": 2.7,
+        "cost_per_kg": 12.50
+    },
+    {
+        "id": "steel_1018",
+        "name": "Steel 1018",
+        "process": "CNC Machining",
+        "density_g_cm3": 7.87,
+        "cost_per_kg": 8.00
+    },
+    {
+        "id": "brass_c360",
+        "name": "Brass C360",
+        "process": "CNC Machining",
+        "density_g_cm3": 8.5,
+        "cost_per_kg": 18.00
+    },
+    {
+        "id": "abs_plastic",
+        "name": "ABS Plastic",
+        "process": "CNC Machining",
+        "density_g_cm3": 1.07,
+        "cost_per_kg": 15.00
+    }
+] 

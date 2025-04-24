@@ -1,0 +1,34 @@
+{
+  "paymentIntentId": "test_pi",
+  "customerName": "Test Customer",
+  "customerEmail": "test@example.com",
+  "totalAmount": 142.50,
+  "items": [
+    {
+      "id": "Q-1745479341709-A",
+      "name": "SM_DrainGrate.stl",
+      "price": 65.25,
+      "quantity": 1,
+      "material": "STANDARD_RESIN",
+      "process": "Standard",
+      "technology": "SLA"
+    },
+    {
+      "id": "Q-1745479355597-A",
+      "name": "3DP_CupHolder.stl",
+      "price": 77.25,
+      "quantity": 1,
+      "material": "STANDARD_RESIN",
+      "process": "Standard",
+      "technology": "SLA"
+    }
+  ],
+  "timestamp": "2025-04-24T00:30:00.000Z",
+  "shippingAddress": {
+    "line1": "123 Main St",
+    "city": "San Francisco",
+    "state": "CA",
+    "postal_code": "94105",
+    "country": "US"
+  }
+}

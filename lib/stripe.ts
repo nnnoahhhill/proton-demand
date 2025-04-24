@@ -24,6 +24,7 @@ export interface CreatePaymentIntentRequest {
   };
   specialInstructions?: string;
   metadata?: Record<string, string>;
+  couponCode?: string; // Optional coupon or admin test code
 }
 
 /**
@@ -34,6 +35,8 @@ export interface PaymentIntentResponse {
   paymentIntentId: string;
   amount: number;
   currency: string;
+  isTestMode?: boolean; // Indicates if this is a test payment (no real charge)
+  discount?: number; // Discount percentage if a coupon was applied
 }
 
 /**

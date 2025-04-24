@@ -7,7 +7,7 @@ export function CartIcon() {
   const { totalItems } = useCart();
 
   return (
-    <Link href="/checkout" className="relative inline-flex items-center">
+    <Link href="/cart" className="relative inline-flex items-center">
       <svg 
         xmlns="http://www.w3.org/2000/svg" 
         width="24" 

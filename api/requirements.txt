@@ -1,3 +1,0 @@
-numpy>=1.22.0
-trimesh>=3.16.0
-pymeshlab>=2022.2.post2 

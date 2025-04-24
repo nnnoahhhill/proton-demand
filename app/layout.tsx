@@ -17,7 +17,12 @@ export const metadata = {
   title: "proton|demand - Pay less. Build more.",
   description:
     "Industrial-grade manufacturing at founder-friendly prices. Upload your 3D models and get instant quotes.",
-    generator: 'v0.dev'
+  generator: 'v0.dev',
+  icons: {
+    icon: '/brand_assets/PD_favicon_green.png',
+    shortcut: '/brand_assets/PD_favicon_green.png',
+    apple: '/brand_assets/PD_favicon_green.png',
+  }
 }
 
 export default function RootLayout({

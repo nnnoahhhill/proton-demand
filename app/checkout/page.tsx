@@ -1,11 +1,19 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCart } from '@/lib/cart';
 import { useLoading } from '@/lib/loading-context';
-import { sendOrderNotification } from '@/lib/slack';
 import { GlowButton } from '@/components/ui/glow-button';
+import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
+import { Elements } from '@stripe/react-stripe-js';
+import { createPaymentIntent } from '@/lib/api';
+import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
+import CheckoutForm from './CheckoutForm';
+
+// Load Stripe outside component to avoid recreating on render
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLIC_KEY || '');
 
 export default function CheckoutPage() {
   const { items, totalPrice, subtotalPrice, shippingCost, clearCart, removeItem, updateQuantity } = useCart();
@@ -13,6 +21,11 @@ export default function CheckoutPage() {
   const { showLoadingOverlay, hideLoadingOverlay } = useLoading();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentStep, setCurrentStep] = useState(1); // 1 = Shipping, 2 = Payment
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [paymentSuccessful, setPaymentSuccessful] = useState(false);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -35,6 +48,11 @@ export default function CheckoutPage() {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Calculate total
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const shipping = shippingCost;
+  const total = subtotal + shipping;
 
   // Handle form changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
@@ -125,31 +143,86 @@ export default function CheckoutPage() {
       // Generate a random order number
       const orderNumber = `ORD-${Math.floor(Math.random() * 1000000).toString().padStart(6, '0')}`;
 
-      // Send order notification to Slack
-      await sendOrderNotification({
-        orderId: orderNumber,
-        customerName: formData.fullName,
-        customerEmail: formData.email,
-        items: items.map(item => ({
-          id: item.id,
-          fileName: item.fileName,
-          process: item.process,
-          material: item.material,
-          finish: item.finish,
-          quantity: item.quantity,
-          price: item.price
-        })),
-        totalPrice,
-        currency: 'USD',
-        specialInstructions: formData.specialInstructions,
-        shippingAddress: {
-          line1: formData.address,
-          city: formData.city,
-          state: formData.state,
-          postal_code: formData.zipCode,
-          country: formData.country
+      // Get model files for the notification
+      // We need to retrieve the actual STL files for each quote
+      let modelFilesForNotification: File[] = [];
+      
+      try {
+        console.log("DEBUG: Starting to retrieve model files for Slack notification");
+        for (const item of items) {
+          if (localStorage && typeof window !== 'undefined') {
+            // First check for basic file metadata
+            const storedFileData = localStorage.getItem(`model_file_${item.id}`);
+            console.log(`DEBUG: Retrieved stored file data for item ${item.id}:`, storedFileData);
+            
+            // Then check for enhanced metadata (from our new storage approach)
+            const storedMetadata = localStorage.getItem(`model_file_metadata_${item.id}`);
+            console.log(`DEBUG: Retrieved stored file metadata for item ${item.id}:`, storedMetadata);
+            
+            if (storedFileData || storedMetadata) {
+              try {
+                // Use enhanced metadata if available, otherwise fallback to basic data
+                const fileData = storedMetadata ? JSON.parse(storedMetadata) : JSON.parse(storedFileData || '{}');
+                console.log(`DEBUG: Parsed file data for ${item.id}:`, fileData);
+                
+                // Create a file with the correct name and quoteId
+                const fileName = fileData.fileName || item.fileName;
+                console.log(`DEBUG: Creating placeholder file with name ${fileName} and quoteId ${item.id}`);
+                
+                // Get the baseQuoteId and suffix for better file tracking
+                const baseQuoteId = fileData.baseQuoteId || item.baseQuoteId;
+                const suffix = fileData.suffix || item.suffix || '';
+                
+                // Since we can't reliably store large files in localStorage, we create a small
+                // placeholder file with the correct name. The actual file will be retrieved
+                // from the server storage in the Slack notification handler.
+                const placeholderContent = new Uint8Array([
+                  // This is an ASCII string embedded in the file to indicate it's a placeholder
+                  // that should be replaced with a server-side file.
+                  // We embed the quote ID with baseQuoteId for better file tracking
+                  ...Array.from(`SERVER_STORED_FILE:${item.id}:BASE:${baseQuoteId}:SUFFIX:${suffix}`).map(c => c.charCodeAt(0))
+                ]);
+                
+                const modelFile = new File(
+                  [placeholderContent],
+                  fileName,
+                  { 
+                    type: fileData.fileType || 'model/stl',
+                    lastModified: fileData.lastModified || Date.now()
+                  }
+                );
+                
+                // Add a special property to indicate this is a server-stored file
+                // This will be checked in the Slack notification handler
+                Object.defineProperty(modelFile, 'serverStored', {
+                  value: true,
+                  writable: false
+                });
+                
+                // Also add the quote ID for reference
+                Object.defineProperty(modelFile, 'quoteId', {
+                  value: item.id,
+                  writable: false
+                });
+                
+                console.log(`DEBUG: Adding placeholder file to notification:`, modelFile.name, modelFile.size);
+                modelFilesForNotification.push(modelFile);
+              } catch (e) {
+                console.error('Error parsing stored file data:', e);
+              }
+            } else {
+              console.log(`DEBUG: No stored file data found for item ${item.id}`);
+            }
+          }
         }
-      });
+        console.log(`DEBUG: Total model files for notification: ${modelFilesForNotification.length}`);
+      } catch (e) {
+        console.error('Error getting model files for notification:', e);
+      }
+      
+      // NOTE: Order notification is now handled by the backend Stripe webhook.
+      // The sendOrderNotification call has been removed from here.
+      console.log('INFO: Payment successful, cart cleared. Backend webhook will handle Slack notification.');
 
       // Simulate processing time
       await new Promise(resolve => setTimeout(resolve, 1500));
@@ -167,6 +240,70 @@ export default function CheckoutPage() {
       setIsSubmitting(false);
     }
   };
+
+  // Function to handle successful payment (passed to CheckoutForm)
+  const handlePaymentSuccess = (piId: string) => {
+    console.log("Payment successful on page level:", piId);
+    setPaymentSuccessful(true);
+    setPaymentIntentId(piId);
+    setError(null);
+    setLoading(false);
+    // It's generally safer to clear the cart after webhook confirmation,
+    // but clearing it here provides faster feedback to the user.
+    // clearCart(); 
+  };
+
+  // Function to handle errors during payment (passed to CheckoutForm)
+  const handlePaymentError = (errorMessage: string) => {
+      console.error("Payment error on page level:", errorMessage);
+      setError(errorMessage);
+      setLoading(false);
+  };
+
+  // Function to handle loading state changes (passed to CheckoutForm)
+  const handleLoadingChange = (isLoading: boolean) => {
+      setLoading(isLoading);
+  };
+
+  // Stripe Elements options - Minimal for now, can be expanded
+  // The clientSecret will be managed within the CheckoutForm component usually
+  const options: StripeElementsOptions = {
+    // We don't pass clientSecret here if PaymentIntent is created on submit
+    appearance: {
+      theme: 'night', // Matches the site theme
+      variables: {
+        colorPrimary: '#5fe496',
+        colorBackground: '#0C1F3D', // Slightly different from main bg for contrast?
+        colorText: '#FFFFFF',
+        colorDanger: '#F46036',
+        fontFamily: '"Avenir Next", system-ui, sans-serif', // Match font
+        borderRadius: '0px', // Match border radius
+        colorTextPlaceholder: '#ffffff70',
+      },
+      rules: {
+        '.Input': {
+            backgroundColor: '#0A1525', // Input background
+            border: '1px solid #1E2A45' // Input border
+        }
+      }
+    },
+  };
+
+  if (paymentSuccessful) {
+    return (
+      <div className="flex flex-col min-h-screen bg-[#0A1525] text-white">
+        <main className="flex-1 container py-10 flex flex-col items-center justify-center text-center">
+          <h1 className="text-3xl font-andale text-[#5fe496] mb-4">Payment Successful!</h1>
+          <p className="text-lg text-white/80 mb-6">Thank you for your order. We'll get started on it right away.</p>
+          <p className="text-sm text-white/60 mb-8">Order Confirmation ID: {paymentIntentId || 'N/A'}</p>
+          <Link href="/" className="text-[#5fe496] hover:underline font-avenir">
+            Return to Homepage
+          </Link>
+          {/* Maybe add a link to an order history page later */}
+        </main>
+      </div>
+    );
+  }
 
   // If cart is empty, show a message
   if (items.length === 0) {
@@ -186,326 +323,84 @@ export default function CheckoutPage() {
   }
 
   return (
-    <div className="container px-4 md:px-6 py-8">
-      <h1 className="text-3xl font-andale mb-8 text-center">Checkout</h1>
-
-      {/* Estimated delivery notice */}
-      <div className="glow-card rounded-none border border-[#F46036] bg-[#F46036]/10 p-3 mb-6 text-center">
-        <p className="font-andale text-[#F46036]">
-          All orders ship within 10 business days from order confirmation to delivery
-        </p>
-      </div>
-
-      {/* Checkout steps */}
-      <div className="mb-6">
-        <div className="flex justify-center items-center">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === 1 ? 'bg-[#F46036] text-white' : 'bg-[#1E2A45] text-white/70'}`}>
-            1
-          </div>
-          <div className={`h-1 w-12 ${currentStep > 1 ? 'bg-[#F46036]' : 'bg-[#1E2A45]'}`}></div>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === 2 ? 'bg-[#F46036] text-white' : 'bg-[#1E2A45] text-white/70'}`}>
-            2
-          </div>
+    <div className="flex flex-col min-h-screen bg-[#0A1525] text-white">
+      <header className="py-4 border-b border-[#1E2A45]">
+        <div className="container flex items-center justify-between">
+           <Link href="/quote" className="flex items-center text-white hover:text-[#5fe496] transition-colors">
+             <ArrowLeft className="h-5 w-5 mr-2" />
+             Back to Quote
+           </Link>
+           <h1 className="text-2xl font-andale">Checkout</h1>
+           {/* Placeholder for maybe a logo */}
+           <div></div>
         </div>
-        <div className="flex justify-center mt-1">
-          <div className={`text-xs w-20 text-center ${currentStep === 1 ? 'text-white' : 'text-white/70'}`}>Shipping</div>
-          <div className={`text-xs w-20 text-center ${currentStep === 2 ? 'text-white' : 'text-white/70'}`}>Payment</div>
-        </div>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Form section */}
-        <div className="lg:col-span-2">
-          <form onSubmit={handleSubmit}>
-            {/* Step 1: Shipping Information */}
-            {currentStep === 1 && (
-              <div className="glow-card rounded-none border border-[#1E2A45] bg-[#0C1F3D]/30 p-5 backdrop-blur-sm">
-                <h2 className="text-xl font-andale mb-4">Shipping Information</h2>
-
-                <div className="space-y-2">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+      <main className="flex-1 container py-10">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+          {/* Left side: Order Summary */}
+          <div className="space-y-6">
+            <h2 className="text-xl font-andale border-b border-[#1E2A45] pb-2 mb-4">Order Summary</h2>
+            {items.length === 0 ? (
+              <p className="text-white/70">Your cart is empty.</p>
+            ) : (
+              <ul className="space-y-4">
+                {items.map(item => (
+                  <li key={item.id} className="flex justify-between items-center text-sm">
                     <div>
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">Full Name</label>
-                      <input
-                        type="text"
-                        name="fullName"
-                        value={formData.fullName}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                      />
-                      {errors.fullName && <p className="text-[#F46036] text-xs mt-0.5">{errors.fullName}</p>}
+                      <p className="font-medium font-avenir">{item.fileName} (x{item.quantity})</p>
+                      <p className="text-xs text-white/60">{item.process} / {item.material}</p>
                     </div>
-
-                    <div>
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">Email</label>
-                      <input
-                        type="email"
-                        name="email"
-                        value={formData.email}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                      />
-                      {errors.email && <p className="text-[#F46036] text-xs mt-0.5">{errors.email}</p>}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-white/70 mb-1 text-xs font-avenir">Phone</label>
-                    <input
-                      type="tel"
-                      name="phone"
-                      value={formData.phone}
-                      onChange={handleChange}
-                      className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                    />
-                    {errors.phone && <p className="text-[#F46036] text-xs mt-0.5">{errors.phone}</p>}
-                  </div>
-
-                  <div>
-                    <label className="block text-white/70 mb-1 text-xs font-avenir">Address</label>
-                    <input
-                      type="text"
-                      name="address"
-                      value={formData.address}
-                      onChange={handleChange}
-                      className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                    />
-                    {errors.address && <p className="text-[#F46036] text-xs mt-0.5">{errors.address}</p>}
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    <div>
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">City</label>
-                      <input
-                        type="text"
-                        name="city"
-                        value={formData.city}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                      />
-                      {errors.city && <p className="text-[#F46036] text-xs mt-0.5">{errors.city}</p>}
-                    </div>
-
-                    <div>
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">State</label>
-                      <input
-                        type="text"
-                        name="state"
-                        value={formData.state}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                      />
-                      {errors.state && <p className="text-[#F46036] text-xs mt-0.5">{errors.state}</p>}
-                    </div>
-
-                    <div>
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">ZIP Code</label>
-                      <input
-                        type="text"
-                        name="zipCode"
-                        value={formData.zipCode}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                      />
-                      {errors.zipCode && <p className="text-[#F46036] text-xs mt-0.5">{errors.zipCode}</p>}
-                    </div>
-
-                    <div>
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">Country</label>
-                      <select
-                        name="country"
-                        value={formData.country}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm"
-                      >
-                        <option value="US">United States</option>
-                        <option value="CA">Canada</option>
-                        <option value="UK">United Kingdom</option>
-                        <option value="AU">Australia</option>
-                        <option value="DE">Germany</option>
-                        <option value="FR">France</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
-                    <div className="md:col-span-3">
-                      <label className="block text-white/70 mb-1 text-xs font-avenir">Special Instructions (Optional)</label>
-                      <textarea
-                        name="specialInstructions"
-                        value={formData.specialInstructions}
-                        onChange={handleChange}
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-1.5 rounded-none text-white font-avenir text-sm min-h-[60px]"
-                        placeholder="Any special requirements or notes for your order..."
-                      />
-                    </div>
-                    <div className="md:col-span-1 flex items-end justify-end h-full">
-                      <GlowButton
-                        type="button"
-                        onClick={nextStep}
-                        className="bg-[#5fe496] text-[#0A1525] hover:bg-[#5fe496]/80 w-full md:w-auto"
-                      >
-                        Continue to Payment
-                      </GlowButton>
-                    </div>
-                  </div>
+                    <p className="font-avenir">${(item.price * item.quantity).toFixed(2)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {items.length > 0 && (
+              <div className="border-t border-[#1E2A45] pt-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <p className="text-white/70">Subtotal</p>
+                  <p>${subtotal.toFixed(2)}</p>
+                </div>
+                <div className="flex justify-between">
+                  <p className="text-white/70">Shipping</p>
+                  <p>${shipping.toFixed(2)}</p>
+                </div>
+                <div className="flex justify-between font-bold text-base">
+                  <p>Total</p>
+                  <p>${total.toFixed(2)}</p>
                 </div>
               </div>
             )}
+          </div>
 
-            {/* Step 2: Payment Information */}
-            {currentStep === 2 && (
-              <div className="glow-card rounded-none border border-[#1E2A45] bg-[#0C1F3D]/30 p-5 backdrop-blur-sm">
-                <h2 className="text-xl font-andale mb-4">Payment Information</h2>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-white/70 mb-1 text-sm font-avenir">Card Number</label>
-                    <input
-                      type="text"
-                      name="cardNumber"
-                      value={formData.cardNumber}
-                      onChange={handleChange}
-                      placeholder="1234 5678 9012 3456"
-                      className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir"
-                    />
-                    {errors.cardNumber && <p className="text-[#F46036] text-xs mt-1">{errors.cardNumber}</p>}
-                  </div>
-
-                  <div>
-                    <label className="block text-white/70 mb-1 text-sm font-avenir">Name on Card</label>
-                    <input
-                      type="text"
-                      name="cardName"
-                      value={formData.cardName}
-                      onChange={handleChange}
-                      className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir"
-                    />
-                    {errors.cardName && <p className="text-[#F46036] text-xs mt-1">{errors.cardName}</p>}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-white/70 mb-1 text-sm font-avenir">Expiry Date</label>
-                      <input
-                        type="text"
-                        name="expiryDate"
-                        value={formData.expiryDate}
-                        onChange={handleChange}
-                        placeholder="MM/YY"
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir"
-                      />
-                      {errors.expiryDate && <p className="text-[#F46036] text-xs mt-1">{errors.expiryDate}</p>}
-                    </div>
-
-                    <div>
-                      <label className="block text-white/70 mb-1 text-sm font-avenir">CVV</label>
-                      <input
-                        type="text"
-                        name="cvv"
-                        value={formData.cvv}
-                        onChange={handleChange}
-                        placeholder="123"
-                        className="w-full bg-[#0A1525] border border-[#1E2A45] p-2 rounded-none text-white font-avenir"
-                      />
-                      {errors.cvv && <p className="text-[#F46036] text-xs mt-1">{errors.cvv}</p>}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-5 flex justify-between">
-                  <GlowButton
-                    type="button"
-                    onClick={prevStep}
-                    variant="outline"
-                  >
-                    Back to Shipping
-                  </GlowButton>
-                </div>
-              </div>
-            )}
-          </form>
-        </div>
-
-        {/* Order summary sidebar */}
-        <div className="lg:col-span-1">
-          <div className="glow-card rounded-none border border-[#1E2A45] bg-[#0C1F3D]/30 p-5 backdrop-blur-sm sticky top-10">
-            <h2 className="text-xl font-andale mb-3">Order Summary</h2>
-
-            {/* Delivery notice */}
-            <div className="p-2 mb-3 border border-[#1E2A45] bg-[#0A1525]/50">
-              <p className="text-sm text-[#5fe496] font-andale">10-day delivery</p>
-            </div>
-
-            <div className="mb-3 max-h-[40vh] overflow-y-auto pr-2">
-              {items.map((item, index) => (
-                <div key={item.id || `item-${index}`} className="mb-3 pb-3 border-b border-[#1E2A45]">
-                  <div className="flex justify-between mb-1">
-                    <div className="font-medium">{item.process || 'Custom Part'}</div>
-                    <button
-                      onClick={() => removeItem(item.id)}
-                      className="text-[#F46036] text-sm hover:underline"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                  <div className="text-sm text-white/70">
-                    <div>Material: {item.material || 'Standard'}</div>
-                    <div>Finish: {item.finish || 'Standard'}</div>
-                    <div>File: {item.fileName || 'Uploaded file'}</div>
-                    <div>Weight: {((item.weightInKg || 0.1) * item.quantity).toFixed(3)} kg</div>
-                  </div>
-                  <div className="flex justify-between mt-2 items-center">
-                    <div className="flex items-center">
-                      <button
-                        onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
-                        className="w-7 h-7 bg-[#0A1525] border border-[#1E2A45] flex items-center justify-center text-white"
-                      >
-                        -
-                      </button>
-                      <span className="w-8 text-center">{item.quantity}</span>
-                      <button
-                        onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
-                        className="w-7 h-7 bg-[#0A1525] border border-[#1E2A45] flex items-center justify-center text-white"
-                      >
-                        +
-                      </button>
-                    </div>
-                    <div className="font-medium">${(item.price * item.quantity).toFixed(2)}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-between py-2 border-b border-[#1E2A45] text-white/70">
-              <div>Subtotal</div>
-              <div>${subtotalPrice.toFixed(2)}</div>
-            </div>
-
-            <div className="flex justify-between py-2 border-b border-[#1E2A45] text-white/70">
-              <div>Shipping</div>
-              <div>${shippingCost.toFixed(2)}</div>
-            </div>
-
-            <div className="flex justify-between py-3 text-lg font-andale">
-              <div>Total</div>
-              <div>${totalPrice.toFixed(2)}</div>
-            </div>
-
-            {/* Place Order button moved here */}
-            <div className="mt-4">
-              <GlowButton
-                type="button"
-                onClick={handleSubmit}
-                disabled={isSubmitting || currentStep !== 2}
-                className="w-full bg-[#5fe496] text-[#0A1525] hover:bg-[#5fe496]/80"
-              >
-                {isSubmitting ? 'Processing...' : 'Place Order'}
-              </GlowButton>
-            </div>
+          {/* Right side: Checkout Form */}
+          <div className="space-y-6">
+            <h2 className="text-xl font-andale border-b border-[#1E2A45] pb-2 mb-4">Shipping & Payment</h2>
+            {/* Stripe Elements Provider wraps the form */} 
+            <Elements stripe={stripePromise} options={options}>
+              {/* Pass cart items and callbacks to the form */}
+              <CheckoutForm
+                totalAmount={total}
+                onPaymentSuccess={handlePaymentSuccess}
+                onPaymentError={handlePaymentError}
+                onLoadingChange={handleLoadingChange}
+                shippingCost={shipping}
+              />
+            </Elements>
+            {/* Display loading/error messages triggered by CheckoutForm */} 
+             {loading && (
+                <p className="text-sm text-white/70 mt-2">Processing payment...</p>
+             )}
+             {error && (
+                <p className="text-sm text-[#F46036] mt-2">Error: {error}</p>
+             )}
           </div>
         </div>
-      </div>
+      </main>
+
+      {/* Footer (optional) */}
+      {/* ... */}
     </div>
   );
 }

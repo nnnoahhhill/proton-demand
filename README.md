@@ -1,132 +1,121 @@
-# Proton Demand: On-Demand Manufacturing Price Calculator
+# ProtonDemand Manufacturing Platform
 
-Proton Demand is an instant quoting platform for 3D printing, CNC machining, and sheet metal fabrication. This tool provides immediate pricing for manufacturing parts without the traditional markup, eliminating the need for sales calls or lengthy quotation processes.
+A full-stack platform for on-demand manufacturing services including 3D printing, CNC machining, and sheet metal fabrication.
 
 ## Features
 
-- **Instant Quoting**: Upload 3D models (STL/STEP files) and receive immediate pricing
-- **Multiple Manufacturing Methods**: Support for 3D printing (FDM, SLA, SLS), CNC machining, and sheet metal fabrication
-- **Design for Manufacturing (DFM) Analysis**: Automatic analysis of parts for manufacturability
-- **Transparent Pricing**: No hidden fees or markups typical of traditional manufacturing services
-- **Fast Turnaround**: Streamlined ordering and production process
+- Instant quotes for 3D manufacturing processes
+- Real-time model visualization
+- Secure payment processing with Stripe
+- Automated order notification system
+- Smart DFM (Design for Manufacturing) analysis
+- File storage for 3D models and engineering drawings
 
-## Technology Stack
+## Environment Variables
 
-### Frontend
-- Next.js
-- React
-- Three.js for 3D model visualization
-- TailwindCSS for styling
-- Stripe for payment processing
+To run this project, you will need to add the following environment variables to your `.env` file (create one if it doesn't exist):
 
-### Backend
-- FastAPI (Python)
-- PrusaSlicer for 3D print simulation and analysis
-- PyMeshLab for mesh analysis
-- OpenCascade (optional) for STEP file support
-- Stripe API integration
+```
+# Frontend (Next.js - prefix with NEXT_PUBLIC_)
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_YOUR_PUBLISHABLE_KEY
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 
-## Getting Started
+# Backend (FastAPI)
+STRIPE_SECRET_KEY=sk_test_YOUR_SECRET_KEY
+STRIPE_WEBHOOK_SECRET=whsec_YOUR_WEBHOOK_SECRET
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+SLACK_BOT_TOKEN=xoxb-YOUR-SLACK-BOT-TOKEN
+SLACK_CHANNEL_ID=YOUR-SLACK-CHANNEL-ID
 
-### Prerequisites
-
-- Node.js (v16+)
-- Python 3.8+
-- PrusaSlicer
-- (Optional) OpenCascade for advanced STEP file analysis
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/proton-demand.git
-cd proton-demand
+# Optional - for file storage configuration
+STORAGE_BASE_DIR=/path/to/persistent/storage
 ```
 
-2. Set up the frontend:
-```bash
-npm install
+**Note:** Replace the placeholder values with your actual keys and URLs.
+
+## File Storage System
+
+The platform includes a file storage system for 3D models that:
+
+- Stores files with quote ID reference for easy tracking
+- Uses a structured naming convention: `{quoteID}_{filename}`
+- Supports STL, STEP, STP, and OBJ file formats
+- Saves files to a configurable persistent storage location
+
+### Storage Workflow
+
+1. When a quote is generated, the 3D model file is temporarily stored in localStorage
+2. During checkout, file metadata is passed to the server
+3. Upon successful order placement, the file is:
+   - Saved to the server's filesystem with the quote ID as a prefix
+   - Attached to the Slack notification
+   - Associated with the order for future reference
+
+## Slack Notification System
+
+Orders generate detailed Slack notifications that include:
+
+- Customer information (name, contact details, shipping address)
+- Order date in PST/PDT timezone
+- Quote ID reference number
+- Order details (technology, material, quantity)
+- Direct attachment of the 3D model file
+- No pricing or payment information (per requirements)
+
+### Notification Format
+
+The Slack message uses a structured format with clearly defined sections:
+
 ```
+🧱 New Manufacturing Order: ORD-123456
 
-3. Set up the Python environment:
-```bash
-# Using conda (recommended)
-conda env create -f environment.yml
-conda activate dfm-env
+Customer: John Smith
+Email: john@example.com
 
-# Or using pip
-pip install -r requirements.txt
+Order Date (PST): April 17, 2025, 10:00 AM
+
+Quote ID: Q-12345678
+Order ID: ORD-123456
+
+Items:
+• 5x example.stl (3D Printing, FDM, PLA, Standard High-Quality)
+
+Shipping Address:
+123 Main St
+San Francisco, CA 94105
+United States
+
+[File Attachment: example_QuoteID-Q-12345678.stl]
 ```
-
-4. Configure PrusaSlicer:
-```bash
-python fix_prusa_slicer.py
-```
-
-5. Set up environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
-
-### Running the Application
-
-1. Start the backend server:
-```bash
-python dfm/manufacturing_dfm_api.py
-```
-
-2. Start the frontend development server:
-```bash
-npm run dev
-```
-
-3. Access the application at http://localhost:3000
-
-## Architecture
-
-The system consists of two main components:
-
-1. **Frontend**: A Next.js application that provides the user interface for uploading models, configuring manufacturing options, and processing payments.
-
-2. **Backend**: A FastAPI application that handles:
-   - File uploads and processing
-   - DFM (Design for Manufacturing) analysis
-   - Price calculation
-   - Integration with manufacturing workflows
-
-The backend leverages specialized components:
-- **3D Print DFM Analyzer**: Analyzes models for 3D printing compatibility
-- **CNC Analysis Suite**: Provides feature extraction and quoting for CNC parts
-- **Sheet Metal Analysis**: Evaluates sheet metal designs for manufacturability
 
 ## Testing
 
-Run the following commands to test the system:
+To test the platform locally:
 
-```bash
-# Test the backend environment
-python test_environment.py
+1. Start the backend API server
+2. Run the Next.js frontend
+3. Generate a quote for a 3D model
+4. Complete the checkout process
+5. Verify the Slack notification and file storage
 
-# Test the DFM analysis system
-python test_dfm_environment.py
+For testing Stripe payments, use test card numbers:
+- Success: 4242 4242 4242 4242
+- Decline: 4000 0000 0000 0002
 
-# Test the quote API
-python test_quote_api.py
-```
+## Maintenance
 
-## Deployment
+### File Storage
 
-The application is configured for deployment to Vercel. Use the following command to build for production:
+The file storage system is designed to be minimal and direct. For production:
 
-```bash
-npm run build
-```
+- Consider implementing a cloud storage solution (AWS S3, Google Cloud Storage)
+- Set up regular backups of the storage directory
+- Implement file cleanup for abandoned quotes
 
-## License
+### Slack Integration
 
-This project is proprietary and confidential.
+The Slack integration can be configured with different webhook URLs for:
+- Development environment (test notifications)
+- Production environment (real order notifications)
 
-## Support
-
-For any questions or support needs, please contact the development team. 
+Configure these in your environment variables as needed.
