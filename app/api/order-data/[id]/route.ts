@@ -4,32 +4,8 @@
  * Used by the order success page to display order details
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, readFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { storeFileInBlob, getFileFromBlob, listFilesInBlob } from '@/lib/blob';
 import path from 'path';
-import { constants } from 'fs';
-import { access } from 'fs/promises';
-
-// Base storage directory for order data
-const projectRoot = process.cwd();
-const ORDERS_DATA_DIR = path.join(projectRoot, 'storage', 'orders');
-
-// Initialize the orders directory if it doesn't exist
-async function initOrdersDirectory() {
-  try {
-    try {
-      await access(ORDERS_DATA_DIR, constants.F_OK);
-      console.log(`Orders directory exists: ${ORDERS_DATA_DIR}`);
-    } catch (e) {
-      console.log(`Creating orders directory: ${ORDERS_DATA_DIR}`);
-      await mkdir(ORDERS_DATA_DIR, { recursive: true });
-    }
-    return true;
-  } catch (error) {
-    console.error('Error initializing orders directory:', error);
-    return false;
-  }
-}
 
 // GET handler - retrieve order data
 export async function GET(
@@ -40,7 +16,7 @@ export async function GET(
     // In NextJS 13+, params needs to be awaited
     const { id } = await Promise.resolve(params);
     
-    // Make sure ID is valid to prevent directory traversal
+    // Make sure ID is valid to prevent security issues
     if (!id || id.includes('/') || id.includes('..')) {
       return NextResponse.json(
         { success: false, error: 'Invalid order ID' },
@@ -48,28 +24,45 @@ export async function GET(
       );
     }
     
-    // Initialize directory
-    await initOrdersDirectory();
+    // Construct blob path
+    const blobPath = `orders/${id}.json`;
     
-    // Construct file path
-    const filePath = path.join(ORDERS_DATA_DIR, `${id}.json`);
-    
-    // Check if file exists
-    if (!existsSync(filePath)) {
+    try {
+      // List blobs to find this order
+      const listResult = await listFilesInBlob(blobPath);
+      
+      if (listResult.length === 0) {
+        return NextResponse.json(
+          { success: false, error: 'Order data not found' },
+          { status: 404 }
+        );
+      }
+      
+      // Get the blob URL and fetch it
+      const blobUrl = listResult[0].url;
+      const fileBuffer = await getFileFromBlob(blobUrl);
+      
+      if (!fileBuffer) {
+        return NextResponse.json(
+          { success: false, error: 'Order data not found' },
+          { status: 404 }
+        );
+      }
+      
+      // Parse the order data
+      const orderData = JSON.parse(fileBuffer.toString());
+      
+      return NextResponse.json({
+        success: true,
+        order: orderData
+      });
+    } catch (getError) {
+      console.error('Error getting order data from blob storage:', getError);
       return NextResponse.json(
         { success: false, error: 'Order data not found' },
         { status: 404 }
       );
     }
-    
-    // Read file
-    const data = await readFile(filePath, 'utf8');
-    const orderData = JSON.parse(data);
-    
-    return NextResponse.json({
-      success: true,
-      order: orderData
-    });
   } catch (error) {
     console.error('Error retrieving order data:', error);
     return NextResponse.json(
@@ -88,7 +81,7 @@ export async function POST(
     // In NextJS 13+, params needs to be awaited
     const { id } = await Promise.resolve(params);
     
-    // Make sure ID is valid to prevent directory traversal
+    // Make sure ID is valid to prevent security issues
     if (!id || id.includes('/') || id.includes('..')) {
       return NextResponse.json(
         { success: false, error: 'Invalid order ID' },
@@ -99,21 +92,25 @@ export async function POST(
     // Get request body
     const orderData = await request.json();
     
-    // Initialize directory
-    await initOrdersDirectory();
-    
-    // Construct file path
-    const filePath = path.join(ORDERS_DATA_DIR, `${id}.json`);
-    
     // Add timestamp if not present
     if (!orderData.timestamp) {
       orderData.timestamp = new Date().toISOString();
     }
     
-    // Write data to file
-    await writeFile(filePath, JSON.stringify(orderData, null, 2));
+    // Construct blob path
+    const blobPath = `orders/${id}.json`;
     
-    console.log(`Order data saved to ${filePath}`);
+    // Store data in Vercel Blob
+    const blobUrl = await storeFileInBlob(JSON.stringify(orderData, null, 2), blobPath);
+    
+    if (!blobUrl) {
+      return NextResponse.json(
+        { success: false, error: 'Failed to store order data' },
+        { status: 500 }
+      );
+    }
+    
+    console.log(`Order data saved to Blob at ${blobUrl}`);
     
     return NextResponse.json({
       success: true,

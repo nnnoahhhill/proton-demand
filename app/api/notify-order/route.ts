@@ -2,16 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WebClient } from '@slack/web-api';
 import { IncomingWebhook } from '@slack/webhook';
 import { OrderNotification } from '@/lib/slack';
+import { storeFileInBlob, getFileFromBlob, listFilesInBlob } from '@/lib/blob';
 import path from 'path';
-import fs from 'fs';
+
+// Set longer timeout and config for large file uploads
+export const maxDuration = 60;
+export const config = {
+  runtime: 'nodejs',
+};
 
 // Initialize Slack clients
 const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN || '');
 const webhook = new IncomingWebhook(process.env.SLACK_WEBHOOK_URL || '');
-const channelId = process.env.SLACK_CHANNEL_ID || '';
+// Use the correct channel ID from env vars (SLACK_UPLOAD_CHANNEL_ID instead of SLACK_CHANNEL_ID)
+const channelId = process.env.SLACK_UPLOAD_CHANNEL_ID || '';
 
 // Check if Slack configuration is available
-if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_WEBHOOK_URL || !process.env.SLACK_CHANNEL_ID) {
+if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_WEBHOOK_URL || !process.env.SLACK_UPLOAD_CHANNEL_ID) {
   console.warn('WARNING: Slack configuration is incomplete. Notifications may not work correctly.');
 }
 
@@ -32,22 +39,8 @@ export async function POST(req: NextRequest) {
     const order: OrderNotification = JSON.parse(orderJson);
     console.log(`DEBUG: Processing order notification:`, JSON.stringify(order, null, 2));
     
-    // Import the storage module dynamically (since it's a server component)
-    const { 
-      saveModelFileToFilesystem, 
-      initStorage, 
-      getModelFileFromFilesystem, 
-      getBaseQuoteId,
-      findOrderFolder,
-      getAllOrderModels
-    } = await import('@/lib/storage');
-    const fs = await import('fs');
-    const { promises: fsPromises } = fs;
-    const path = await import('path');
-    
-    // Make sure storage is initialized before processing files
-    await initStorage();
-    console.log(`DEBUG: Storage initialized for file processing`);
+    // Import the getBaseQuoteId function dynamically (since it's a server component)
+    const { getBaseQuoteId } = await import('@/lib/storage');
     
     // Extract the base quote ID for consistency
     const quoteId = order.quoteId || order.items?.[0]?.id || 'NoQuoteID';
@@ -58,7 +51,7 @@ export async function POST(req: NextRequest) {
     const paymentIntentId = order.orderId;
     console.log(`DEBUG: Using payment intent ID: ${paymentIntentId}`);
     
-    // Create timestamp in PST for folder naming (if we need to create a new folder)
+    // Create timestamp in PST for naming
     const now = new Date();
     const pstOptions = { 
       timeZone: 'America/Los_Angeles',
@@ -73,23 +66,8 @@ export async function POST(req: NextRequest) {
     const pstTimestamp = now.toLocaleString('en-US', pstOptions as any)
       .replace(/[\/,:\s]/g, '-');
     
-    // Find or create the order-specific folder - use payment intent ID as primary identifier
-    const orderFolderPath = await findOrderFolder(baseQuoteId, paymentIntentId);
-    console.log(`DEBUG: Order folder path: ${orderFolderPath}`);
-    
-    // Store order data in a JSON file for the success page
+    // Store order data in Vercel Blob for the success page
     try {
-      const ordersDataDir = path.join(process.cwd(), 'storage', 'orders');
-      
-      // Create the orders directory if it doesn't exist
-      try {
-        await fsPromises.access(ordersDataDir, fs.constants.F_OK);
-        console.log(`DEBUG: Orders data directory exists: ${ordersDataDir}`);
-      } catch (e) {
-        console.log(`DEBUG: Creating orders data directory: ${ordersDataDir}`);
-        await fsPromises.mkdir(ordersDataDir, { recursive: true });
-      }
-      
       // Calculate total
       const totalAmount = order.items.reduce((sum, item) => {
         const price = typeof item.price === 'number' ? item.price : 0;
@@ -116,10 +94,10 @@ export async function POST(req: NextRequest) {
         shippingAddress: order.shippingAddress
       };
       
-      // Store the data in the orders directory
-      const orderDataPath = path.join(ordersDataDir, `${order.orderId}.json`);
-      await fsPromises.writeFile(orderDataPath, JSON.stringify(orderData, null, 2));
-      console.log(`DEBUG: Stored order data at ${orderDataPath}`);
+      // Store the data in Vercel Blob
+      const blobPath = `orders/${order.orderId}.json`;
+      await storeFileInBlob(JSON.stringify(orderData, null, 2), blobPath);
+      console.log(`DEBUG: Stored order data in Blob at ${blobPath}`);
     } catch (storeError) {
       console.error(`DEBUG: Error storing order data for success page:`, storeError);
     }
@@ -127,86 +105,44 @@ export async function POST(req: NextRequest) {
     // Format the message for Slack
     const message = formatOrderMessage(order, formData, pstTimestamp);
     
-    // Send the message to Slack
-    await webhook.send({
-      text: `New Order: ${order.orderId}`,
-      blocks: message,
-    });
-    console.log(`DEBUG: Using order folder path: ${orderFolderPath}`);
-    
-    // Get all model files that might be related to this order via quote IDs
-    const modelFiles = await getAllOrderModels(baseQuoteId);
-    console.log(`DEBUG: Found ${modelFiles.length} model files for order with base quote ID: ${baseQuoteId}`);
-    
-    // DIRECT FILE SEARCH: Find all STL files in the storage directory
-    // This is a critical failsafe to ensure we find and attach all relevant files
-    console.log(`DEBUG: Performing direct file search for STL files in storage directory`);
-    const modelsDir = path.join(process.cwd(), 'storage', 'models');
-    let allStlFiles: {path: string; name: string; metadata?: any}[] = [];
-    
+    // Send the message to Slack using the Webhook
     try {
-      // Read all files in the models directory
-      const allFiles = await fsPromises.readdir(modelsDir);
+      console.log(`DEBUG: Sending notification to Slack webhook`);
+      await webhook.send({
+        text: `New Order: ${order.orderId}`,
+        blocks: message,
+      });
+      console.log(`DEBUG: Successfully sent notification to Slack webhook`);
+    } catch (webhookError) {
+      console.error(`DEBUG: Error sending to Slack webhook:`, webhookError);
       
-      // Find all STL files
-      for (const file of allFiles) {
-        if (file.toLowerCase().endsWith('.stl')) {
-          const filePath = path.join(modelsDir, file);
-          console.log(`DEBUG: Found STL file: ${file}`);
-          
-          // Check for quote IDs in the file name that match our items
-          const matchesOrder = order.items.some(item => {
-            return file.includes(item.id) || 
-                  (item.baseQuoteId && file.includes(item.baseQuoteId));
-          });
-          
-          // We're no longer using time-based matching, only check quote ID match
-          const isRecent = false; // Don't include files based on time
-          
-          // Check if metadata exists for this file
-          const metadataPath = `${filePath}.metadata.json`;
-          let metadata = null;
-          try {
-            const metadataExists = await fsPromises.access(metadataPath)
-              .then(() => true)
-              .catch(() => false);
-            
-            if (metadataExists) {
-              const metadataContent = await fsPromises.readFile(metadataPath, 'utf8');
-              metadata = JSON.parse(metadataContent);
-              console.log(`DEBUG: Found metadata for file ${file}`);
-            }
-          } catch (metaErr) {
-            console.log(`DEBUG: Error reading metadata for ${file}: ${metaErr}`);
-          }
-          
-          // Add this file if it matches our order or is recent
-          if (matchesOrder || isRecent) {
-            console.log(`DEBUG: Adding file ${file} to attachment list`);
-            allStlFiles.push({
-              path: filePath,
-              name: file,
-              metadata
-            });
-          }
-        }
+      // Fallback: Try using the Slack client instead
+      try {
+        console.log(`DEBUG: Attempting fallback with slack client`);
+        await slackClient.chat.postMessage({
+          channel: channelId,
+          text: `New Order: ${order.orderId}`,
+          blocks: message,
+        });
+        console.log(`DEBUG: Successfully sent fallback notification via slack client`);
+      } catch (clientError) {
+        console.error(`DEBUG: Error sending fallback via slack client:`, clientError);
       }
-      
-      console.log(`DEBUG: Found ${allStlFiles.length} STL files that might be related to this order`);
-    } catch (scanErr) {
-      console.error(`DEBUG: Error scanning directory for STL files: ${scanErr}`);
     }
     
-    // Upload files if provided
-    const filePromises = [];
-    const processedModelFiles = [];
+    // Using any[] type because Slack's SDK response types are complex
+    const filePromises: any[] = [];
     
     // Regular files (non-models)
     for (let i = 0; formData.has(`file${i}`); i++) {
       const file = formData.get(`file${i}`) as File;
       if (file) {
-        const buffer = Buffer.from(await file.arrayBuffer());
+        // First upload to Blob storage
+        const blobPath = `orders/${order.orderId}/files/${file.name}`;
+        const blobUrl = await storeFileInBlob(file, blobPath);
         
+        // Then upload to Slack
+        const buffer = Buffer.from(await file.arrayBuffer());
         filePromises.push(
           slackClient.files.upload({
             channels: channelId,
@@ -228,14 +164,13 @@ export async function POST(req: NextRequest) {
           // Check if this is a placeholder that indicates a server-stored file
           const buffer = Buffer.from(await modelFile.arrayBuffer());
           const isPlaceholder = buffer.length < 1024 && 
-                               buffer.toString().includes('SERVER_STORED_FILE:');
+                              buffer.toString().includes('SERVER_STORED_FILE:');
           
-          let actualBuffer: Buffer = buffer;
-          let actualFilePath = '';
-          let sourceFilePath = '';
+          let blobUrl = '';
+          let actualBuffer = buffer;
           
           if (isPlaceholder) {
-            console.log(`DEBUG: Detected placeholder file, will retrieve from server storage`);
+            console.log(`DEBUG: Detected placeholder file, will check Blob storage`);
             
             // Extract the quote ID from the placeholder content if possible
             const placeholderContent = buffer.toString();
@@ -243,223 +178,183 @@ export async function POST(req: NextRequest) {
             const newPlaceholderMatch = placeholderContent.match(/SERVER_STORED_FILE:(Q-\d+[-A-Z]?):BASE:(Q-\d+):SUFFIX:([A-Z]?)/);
             const oldPlaceholderMatch = placeholderContent.match(/SERVER_STORED_FILE:(Q-\d+[-A-Z]?)/);
             
-            let fileQuoteId, fileBaseQuoteId, fileSuffix;
+            let fileQuoteId;
             
             if (newPlaceholderMatch) {
-              // New extended format with baseQuoteId and suffix
               fileQuoteId = newPlaceholderMatch[1];
-              fileBaseQuoteId = newPlaceholderMatch[2];
-              fileSuffix = newPlaceholderMatch[3];
-              console.log(`DEBUG: Extracted extended info from placeholder - quoteId: ${fileQuoteId}, baseQuoteId: ${fileBaseQuoteId}, suffix: ${fileSuffix}`);
+              console.log(`DEBUG: Extracted extended info from placeholder - quoteId: ${fileQuoteId}`);
             } else if (oldPlaceholderMatch) {
-              // Old simple format with just quoteId
               fileQuoteId = oldPlaceholderMatch[1];
-              fileBaseQuoteId = baseQuoteId;
-              fileSuffix = '';
               console.log(`DEBUG: Extracted simple quoteId from placeholder: ${fileQuoteId}`);
             } else {
-              // Fallback to baseQuoteId if no match
               fileQuoteId = baseQuoteId;
-              fileBaseQuoteId = baseQuoteId;
-              fileSuffix = '';
               console.log(`DEBUG: No quoteId found in placeholder, using baseQuoteId: ${baseQuoteId}`);
             }
             
-            // Try to find the actual file on the server
+            // Try to find the file in Blob storage
             try {
-              const foundFilePath = await getModelFileFromFilesystem(fileQuoteId, modelFile.name);
-              if (foundFilePath) {
-                sourceFilePath = foundFilePath;
-                console.log(`DEBUG: Found previously stored file at ${sourceFilePath}`);
-                // We'll use the existing file instead of creating a new one
-                actualFilePath = sourceFilePath;
+              // List files with this quoteId and filename
+              const matchingBlobs = await listFilesInBlob(`models/${fileQuoteId}/`);
+              const modelFileBlobs = matchingBlobs.filter(b => 
+                path.basename(b.pathname) === modelFile.name || 
+                b.pathname.includes(modelFile.name)
+              );
+              
+              if (modelFileBlobs.length > 0) {
+                // Use the first matching blob
+                blobUrl = modelFileBlobs[0].url;
+                console.log(`DEBUG: Found previously stored file in Blob: ${blobUrl}`);
                 
-                // Read the file into a buffer
-                actualBuffer = await fsPromises.readFile(sourceFilePath);
-                console.log(`DEBUG: Read existing file into buffer: ${actualBuffer.length} bytes`);
-                
-                // Copy this file to the order-specific folder if it exists
-                if (orderFolderPath) {
-                  try {
-                    const fileName = path.basename(sourceFilePath);
-                    const targetPath = path.join(orderFolderPath, fileName);
-                    
-                    // Check if we need to copy the file (don't do it if it's already there)
-                    if (sourceFilePath !== targetPath) {
-                      console.log(`DEBUG: Copying model file from ${sourceFilePath} to ${targetPath}`);
-                      await fsPromises.copyFile(sourceFilePath, targetPath);
-                      
-                      // Copy metadata file if it exists
-                      const metadataPath = `${sourceFilePath}.metadata.json`;
-                      try {
-                        // Check if metadata file exists
-                        try {
-                          await fsPromises.access(metadataPath, fs.constants.F_OK);
-                          await fsPromises.copyFile(metadataPath, `${targetPath}.metadata.json`);
-                          console.log(`DEBUG: Copied metadata file to ${targetPath}.metadata.json`);
-                        } catch (accessErr) {
-                          console.log(`DEBUG: No metadata file found at ${metadataPath}`);
-                        }
-                      } catch (metaErr) {
-                        console.log(`DEBUG: No metadata file found at ${metadataPath}`);
-                      }
-                    } else {
-                      console.log(`DEBUG: File is already in the order folder, skipping copy`);
-                    }
-                  } catch (copyError) {
-                    console.error(`DEBUG: Error copying file to order folder:`, copyError);
-                  }
+                // Get the file buffer
+                const fileBuffer = await getFileFromBlob(blobUrl);
+                if (fileBuffer) {
+                  actualBuffer = fileBuffer;
+                  console.log(`DEBUG: Got existing file from Blob: ${actualBuffer.length} bytes`);
                 }
+                
+                // Also copy this file to the order's folder in Blob
+                const orderBlobPath = `orders/${order.orderId}/models/${modelFile.name}`;
+                await storeFileInBlob(actualBuffer, orderBlobPath);
+                console.log(`DEBUG: Copied file to order Blob folder: ${orderBlobPath}`);
               } else {
-                console.log(`DEBUG: No previously stored file found for quote ${fileQuoteId}`);
-                // Continue with the placeholder buffer, which will create a minimal file
+                console.log(`DEBUG: No previously stored file found in Blob for quote ${fileQuoteId}`);
+                // Continue with the placeholder buffer
+                
+                // Store the placeholder in Blob storage
+                const placeholderPath = `orders/${order.orderId}/models/${fileQuoteId}/${modelFile.name}`;
+                const result = await storeFileInBlob(buffer, placeholderPath);
+                blobUrl = result || '';
               }
             } catch (findError) {
-              console.error(`DEBUG: Error finding previously stored file:`, findError);
+              console.error(`DEBUG: Error finding previously stored file in Blob:`, findError);
             }
           } else {
             console.log(`DEBUG: Using uploaded file buffer: ${buffer.length} bytes`);
-            actualBuffer = buffer;
+            // Store the file in Blob storage
+            const filePath = `models/${baseQuoteId}/${modelFile.name}`;
+            const result = await storeFileInBlob(buffer, filePath);
+            blobUrl = result || '';
+            
+            // Also store in order folder
+            const orderFilePath = `orders/${order.orderId}/models/${modelFile.name}`;
+            await storeFileInBlob(buffer, orderFilePath);
           }
           
-          // Add to processedModelFiles
-          processedModelFiles.push({
-            name: modelFile.name,
-            buffer: actualBuffer,
-            filePath: actualFilePath,
-            sourceFilePath: sourceFilePath
-          });
+          // Upload to Slack
+          filePromises.push(
+            slackClient.files.upload({
+              channels: channelId,
+              filename: modelFile.name,
+              file: actualBuffer,
+              filetype: getFileType(modelFile.name.split('.').pop() || ''),
+              initial_comment: `File: ${modelFile.name} for Order: ${order.orderId}\nQuote ID: ${baseQuoteId}`,
+            }).then(result => {
+              console.log(`DEBUG: Successfully uploaded model file to Slack: ${result.file?.id}`);
+              return result;
+            }).catch(error => {
+              console.error(`DEBUG: Error uploading model file to Slack:`, error);
+              return error;
+            })
+          );
         } catch (fileError) {
           console.error(`DEBUG: Error processing model file:`, fileError);
         }
       }
     }
     
-    // If we have models from the database, add them to the processedModelFiles list
-    // and copy them to the order folder
-    for (const modelFile of modelFiles) {
-      // Skip if we already have this file processed
-      const isDuplicate = processedModelFiles.some(
-        pf => pf.name === modelFile.fileName || pf.filePath === modelFile.filePath
-      );
+    // Look for any STL files in Blob storage that might be related to this order
+    console.log(`DEBUG: Checking Blob storage for STL files related to this order`);
+    try {
+      // Try to list files for this quote ID
+      const stlFiles = (await listFilesInBlob(`models/${baseQuoteId}/`))
+        .filter(b => b.pathname.toLowerCase().endsWith('.stl'));
       
-      if (isDuplicate) {
-        console.log(`DEBUG: Skipping duplicate model file: ${modelFile.fileName}`);
-        continue;
-      }
+      console.log(`DEBUG: Found ${stlFiles.length} STL files in Blob related to quote ID: ${baseQuoteId}`);
       
-      try {
-        console.log(`DEBUG: Adding model file from database: ${modelFile.fileName} at ${modelFile.filePath}`);
-        
-        if (modelFile.filePath) {
-          // Read the file into a buffer for Slack upload
-          const fileBuffer = await fsPromises.readFile(modelFile.filePath);
+      // Upload each STL file to Slack
+      for (const stlFile of stlFiles) {
+        try {
+          // Get the file content
+          const fileBuffer = await getFileFromBlob(stlFile.url);
+          if (!fileBuffer) continue;
           
-          // Add to processed files list for Slack upload
-          processedModelFiles.push({
-            name: modelFile.fileName,
-            buffer: fileBuffer,
-            filePath: modelFile.filePath,
-            sourceFilePath: modelFile.filePath
-          });
+          const fileName = path.basename(stlFile.pathname);
           
-          // Also copy this file to the order-specific folder if needed
-          if (orderFolderPath) {
-            try {
-              const targetPath = path.join(orderFolderPath, modelFile.fileName);
-              
-              // Check if we need to copy the file (don't do it if it's already there)
-              if (modelFile.filePath !== targetPath) {
-                console.log(`DEBUG: Copying model file from ${modelFile.filePath} to ${targetPath}`);
-                await fsPromises.copyFile(modelFile.filePath, targetPath);
-                
-                // Copy metadata file if it exists
-                const metadataPath = `${modelFile.filePath}.metadata.json`;
-                try {
-                  // Check if metadata file exists
-                  try {
-                    await fsPromises.access(metadataPath, fs.constants.F_OK);
-                    await fsPromises.copyFile(metadataPath, `${targetPath}.metadata.json`);
-                    console.log(`DEBUG: Copied metadata file to ${targetPath}.metadata.json`);
-                  } catch (accessErr) {
-                    console.log(`DEBUG: No metadata file found at ${metadataPath}`);
-                  }
-                } catch (metaErr) {
-                  console.log(`DEBUG: No metadata file found at ${metadataPath}`);
-                }
-              } else {
-                console.log(`DEBUG: File is already in the order folder, skipping copy`);
-              }
-            } catch (copyError) {
-              console.error(`DEBUG: Error copying file to order folder:`, copyError);
-            }
-          }
+          // Copy to order folder in Blob
+          const orderBlobPath = `orders/${order.orderId}/models/${fileName}`;
+          await storeFileInBlob(fileBuffer, orderBlobPath);
+          console.log(`DEBUG: Copied STL file to order Blob folder: ${orderBlobPath}`);
+          
+          // Queue up Slack file upload
+          filePromises.push(
+            slackClient.files.upload({
+              channels: channelId,
+              filename: fileName,
+              file: fileBuffer,
+              filetype: 'binary', // STL files are binary
+              initial_comment: `STL File: ${fileName} for Order: ${order.orderId}`,
+            }).then(result => {
+              console.log(`DEBUG: Successfully uploaded STL file to Slack: ${result.file?.id}`);
+              return result;
+            }).catch(error => {
+              console.error(`DEBUG: Error uploading STL file to Slack:`, error);
+              return error;
+            })
+          );
+        } catch (fileError) {
+          console.error(`DEBUG: Error processing STL file from Blob:`, fileError);
         }
-      } catch (readError) {
-        console.error(`DEBUG: Error reading model file from database:`, readError);
       }
+    } catch (listError) {
+      console.error(`DEBUG: Error listing STL files in Blob:`, listError);
     }
     
-    // Directly upload STL files found in the storage directory
-    console.log(`DEBUG: Uploading ${allStlFiles.length} STL files directly from storage`);
-    for (const stlFile of allStlFiles) {
-      try {
-        // Read the file content
-        const fileBuffer = await fsPromises.readFile(stlFile.path);
-        
-        // Get metadata information if available
-        let metadataInfo = '';
-        if (stlFile.metadata) {
-          const meta = stlFile.metadata;
-          const tech = meta.technology || 'Unknown';
-          const techLabel = ['SLA', 'SLS', 'FDM'].includes(tech) ? `${tech} 3D Printing` : tech;
-          const materialDisplayName = getMaterialDisplayName(meta.material || 'Unknown');
-          metadataInfo = `\nFile: ${stlFile.name}\nTechnology: ${techLabel}\nMaterial: ${materialDisplayName}\nQuantity: ${meta.quantity || '1'}`;
+    // Also check for any files already in the order's Blob folder
+    // This is important for orders that were previously processed
+    try {
+      const orderFiles = await listFilesInBlob(`orders/${order.orderId}/`);
+      console.log(`DEBUG: Found ${orderFiles.length} files already in order folder in Blob`);
+      
+      // Upload any files we haven't already processed
+      for (const orderFile of orderFiles) {
+        // Skip if this file was already processed
+        const fileBasename = path.basename(orderFile.pathname);
+        if (filePromises.some(p => {
+          // Check if this promise is for a file we've already processed
+          return p && typeof p === 'object' && 'filename' in p && p.filename === fileBasename;
+        })) {
+          console.log(`DEBUG: Skipping already processed file: ${orderFile.pathname}`);
+          continue;
         }
         
-        // Queue up slack file upload
-        filePromises.push(
-          slackClient.files.upload({
-            channels: channelId,
-            filename: stlFile.name,
-            file: fileBuffer,
-            filetype: 'binary', // STL files are binary
-            initial_comment: `${metadataInfo}`,
-          }).then(result => {
-            console.log(`DEBUG: Successfully uploaded STL file to Slack: ${result.file?.id}`);
-            return result;
-          }).catch(error => {
-            console.error(`DEBUG: Error uploading STL file to Slack:`, error);
-            return error;
-          })
-        );
-      } catch (fileError) {
-        console.error(`DEBUG: Error reading STL file ${stlFile.path}:`, fileError);
+        try {
+          const fileBuffer = await getFileFromBlob(orderFile.url);
+          if (!fileBuffer) continue;
+          
+          const fileName = path.basename(orderFile.pathname);
+          
+          // Upload to Slack
+          filePromises.push(
+            slackClient.files.upload({
+              channels: channelId,
+              filename: fileName,
+              file: fileBuffer,
+              filetype: getFileType(fileName.split('.').pop() || ''),
+              initial_comment: `File: ${fileName} for Order: ${order.orderId}`,
+            }).then(result => {
+              console.log(`DEBUG: Successfully uploaded order file to Slack: ${result.file?.id}`);
+              return result;
+            }).catch(error => {
+              console.error(`DEBUG: Error uploading order file to Slack:`, error);
+              return error;
+            })
+          );
+        } catch (fileError) {
+          console.error(`DEBUG: Error processing file from order folder in Blob:`, fileError);
+        }
       }
-    }
-    
-    // Upload all processed model files to Slack
-    console.log(`DEBUG: Uploading ${processedModelFiles.length} model files from placeholders to Slack`);
-    for (const modelFile of processedModelFiles) {
-      try {
-        filePromises.push(
-          slackClient.files.upload({
-            channels: channelId,
-            filename: modelFile.name,
-            file: modelFile.buffer,
-            filetype: getFileType(modelFile.name.split('.').pop() || ''),
-            initial_comment: `File: ${modelFile.name}\nTechnology: ${getFormattedTechnology(modelFile.metadata?.technology || 'Unknown')}\nMaterial: ${getMaterialDisplayName(modelFile.metadata?.material || 'Unknown')}\nQuantity: ${modelFile.metadata?.quantity || '1'}`,
-          }).then(result => {
-            console.log(`DEBUG: Successfully uploaded file to Slack: ${result.file?.id}`);
-            return result;
-          }).catch(error => {
-            console.error(`DEBUG: Error uploading file to Slack:`, error);
-            return error;
-          })
-        );
-      } catch (slackError) {
-        console.error('DEBUG: Error setting up Slack file upload:', slackError);
-      }
+    } catch (listError) {
+      console.error(`DEBUG: Error listing files in order folder in Blob:`, listError);
     }
     
     // Wait for all file uploads to complete
@@ -714,4 +609,3 @@ function formatOrderMessage(order: OrderNotification, formData: FormData, timest
     }
   ];
 }
-
