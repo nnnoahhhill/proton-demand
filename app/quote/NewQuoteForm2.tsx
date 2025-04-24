@@ -284,94 +284,241 @@ export default function NewQuoteForm() {
   // Add to cart
   const handleAddToCart = () => {
     if (response && response.success && modelFile) {
-      // Store model file in localStorage for later use in order processing
-      if (window && localStorage) {
+      // Initialize baseQuoteId - if this is the first part for this order
+      // Get or extract the base quote ID
+      let baseQuoteId = response.quote_id;
+      let suffix = '';
+      
+      try {
+        // Check if we can find any existing cart items with the same base ID
+        // This check helps us determine if this is a new or existing order
+        const storedCart = localStorage.getItem('protondemand_cart');
+        if (storedCart) {
+          const cartItems = JSON.parse(storedCart);
+          
+          // Look for any item that might have this quote ID as a base
+          const matchingItems = cartItems.filter((item: any) => {
+            // Either this is the base already
+            return (item.baseQuoteId && item.baseQuoteId === response.quote_id) ||
+              // OR the base is a prefix of this ID
+              (response.quote_id.startsWith(item.baseQuoteId + '-'));
+          });
+          
+          if (matchingItems.length > 0) {
+            // We found existing items - use their baseQuoteId
+            baseQuoteId = matchingItems[0].baseQuoteId;
+            console.log(`DEBUG: Using existing base quote ID: ${baseQuoteId}`);
+          } else {
+            // This is a new order - use quote_id as baseQuoteId
+            console.log(`DEBUG: Using new base quote ID: ${baseQuoteId}`);
+          }
+        } else {
+          console.log(`DEBUG: No existing cart, using quote ID as base: ${baseQuoteId}`);
+        }
+        
+        // Store model file info in localStorage for later use in order processing
+        console.log("DEBUG: Storing model file info for quote:", response.quote_id);
+        
+        // Calculate weight in kg
+        const weightInGrams = response.cost_estimate?.material_weight_g || 100;
+        const weightInKg = weightInGrams / 1000;
+        
+        // Store additional metadata about the file
+        const fileMetadata = {
+          fileName: modelFile.name,
+          fileSize: modelFile.size,
+          fileType: modelFile.type || 'model/stl',
+          lastModified: modelFile.lastModified,
+          quoteId: response.quote_id,
+          baseQuoteId: baseQuoteId,
+          suffix: suffix,
+          technology: printTechnology,
+          // Add weight data for shipping calculations
+          weight_g: weightInGrams,
+          volume_cm3: response.cost_estimate?.total_volume_cm3 || 0,
+          // Store a flag indicating we need to get the file from the server instead
+          serverStored: true
+        };
+        
+        localStorage.setItem(`model_file_metadata_${response.quote_id}`, JSON.stringify(fileMetadata));
+        console.log(`DEBUG: Stored model file metadata for quote ${response.quote_id}`);
+        
+        // We need to upload the file to the server for later access
         try {
-          console.log("DEBUG: Storing model file info for quote:", response.quote_id);
-          // Store minimal file info for the cart
-          localStorage.setItem(`model_file_${response.quote_id}`, JSON.stringify({
-            fileName: modelFile.name,
-            fileType: modelFile.name.split('.').pop()?.toLowerCase(),
-            quoteId: response.quote_id,
-            technology: printTechnology,
-            // Add weight data for shipping calculations
-            weight_g: response.cost_estimate?.material_weight_g || 100,
-            volume_cm3: response.cost_estimate?.total_volume_cm3 || 0
-          }));
+          // Create a form data object to send the file
+          const formData = new FormData();
+          formData.append('file', modelFile);
+          formData.append('quoteId', response.quote_id);
+          formData.append('baseQuoteId', baseQuoteId);
+          formData.append('suffix', suffix);
+          formData.append('technology', printTechnology || 'unknown');
+          formData.append('quantity', String(quantity)); // Add quantity to form data
           
-          // Also store a reference to the file name for sending to Slack
-          // We'll avoid storing the full file blob in localStorage due to quota limitations
-          console.log(`DEBUG: File is too large for localStorage, storing metadata only`);
-          console.log(`DEBUG: Original file name: ${modelFile.name}, size: ${modelFile.size} bytes`);
-          
-          // Store additional metadata about the file
-          const fileMetadata = {
-            fileName: modelFile.name,
-            fileSize: modelFile.size,
-            fileType: modelFile.type || 'model/stl',
-            lastModified: modelFile.lastModified,
-            quoteId: response.quote_id,
-            technology: printTechnology,
-            // Add weight data for shipping calculations
-            weight_g: response.cost_estimate?.material_weight_g || 100,
-            volume_cm3: response.cost_estimate?.total_volume_cm3 || 0,
-            // Store a flag indicating we need to get the file from the server instead
-            serverStored: true
-          };
-          
-          localStorage.setItem(`model_file_metadata_${response.quote_id}`, JSON.stringify(fileMetadata));
-          console.log(`DEBUG: Stored model file metadata for quote ${response.quote_id}`);
-          
-          // We'll need to upload the file to the server immediately instead
-          try {
-            // Create a form data object to send the file
-            const formData = new FormData();
-            formData.append('file', modelFile);
-            formData.append('quoteId', response.quote_id);
-            formData.append('technology', printTechnology || 'unknown');
-            // Add FFF/FDM specific data for slicing configuration
-            if (printTechnology === 'FDM') {
-              formData.append('fff_configured', 'true');
-              formData.append('material', material);
-              if (response.cost_estimate) {
-                formData.append('weight_g', String(response.cost_estimate.material_weight_g || 0));
-                formData.append('volume_cm3', String(response.cost_estimate.total_volume_cm3 || 0));
-              }
+          // Always add material regardless of technology
+          formData.append('material', material || 
+            (printTechnology === 'FDM' ? 'PLA' : 
+             printTechnology === 'SLA' ? 'Standard Resin' : 
+             printTechnology === 'SLS' ? 'Nylon' : 'Standard'));
+                   
+          // Add FFF/FDM specific data for slicing configuration
+          if (printTechnology === 'FDM') {
+            formData.append('fff_configured', 'true');
+            if (response.cost_estimate) {
+              formData.append('weight_g', String(response.cost_estimate.material_weight_g || 0));
+              formData.append('volume_cm3', String(response.cost_estimate.total_volume_cm3 || 0));
             }
-            
-            // Send the file to the server
-            console.log(`DEBUG: Uploading model file to server for quote ${response.quote_id}`);
-            fetch('/api/upload-model', {
-              method: 'POST',
-              body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
+          } else {
+            formData.append('fff_configured', 'false');
+          }
+          
+          // Send the file to the server with retry logic for ECONNRESET errors
+          console.log(`DEBUG: Uploading model file to server for quote ${response.quote_id}`);
+          
+          // Create a function that can be called recursively for retries
+          const uploadModelWithRetry = async (retryCount = 0, maxRetries = 3) => {
+            try {
+              console.log(`DEBUG: Model upload attempt ${retryCount + 1} of ${maxRetries + 1}`);
+              
+              // Add a small random delay between retries to avoid timing conflicts
+              if (retryCount > 0) {
+                const delay = 500 + Math.random() * 1000; // Random delay between 500-1500ms
+                console.log(`DEBUG: Waiting ${delay.toFixed(0)}ms before retry #${retryCount}`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+              }
+              
+              // Create a new FormData for each attempt to avoid stale/consumed data
+              const retryFormData = new FormData();
+              retryFormData.append('file', modelFile);
+              retryFormData.append('quoteId', response.quote_id);
+              retryFormData.append('baseQuoteId', baseQuoteId);
+              retryFormData.append('suffix', suffix);
+              retryFormData.append('technology', printTechnology || 'unknown');
+              retryFormData.append('quantity', String(quantity));
+              
+              // Always add material regardless of technology
+              retryFormData.append('material', material || 
+                (printTechnology === 'FDM' ? 'PLA' : 
+                 printTechnology === 'SLA' ? 'Standard Resin' : 
+                 printTechnology === 'SLS' ? 'Nylon' : 'Standard'));
+                       
+              // Add FFF/FDM specific data for slicing configuration
+              if (printTechnology === 'FDM') {
+                retryFormData.append('fff_configured', 'true');
+                if (response.cost_estimate) {
+                  retryFormData.append('weight_g', String(response.cost_estimate.material_weight_g || 0));
+                  retryFormData.append('volume_cm3', String(response.cost_estimate.total_volume_cm3 || 0));
+                }
+              } else {
+                retryFormData.append('fff_configured', 'false');
+              }
+              
+              // Create a fetch request with timeout
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+              
+              const fetchResponse = await fetch('/api/upload-model', {
+                method: 'POST',
+                body: retryFormData,
+                signal: controller.signal
+              });
+              
+              clearTimeout(timeoutId); // Clear timeout if fetch completes
+              
+              if (!fetchResponse.ok) {
+                const errorData = await fetchResponse.json();
+                throw new Error(errorData.error || 'Server returned an error');
+              }
+              
+              const data = await fetchResponse.json();
               console.log(`DEBUG: Server upload response:`, data);
+              
               // Update metadata with server path
               if (data.success && data.filePath) {
                 const updatedMetadata = {
                   ...fileMetadata,
-                  serverFilePath: data.filePath
+                  serverFilePath: data.filePath,
+                  orderFolderPath: data.orderFolderPath,
+                  uploadTime: new Date().toISOString(),
+                  processingTime: data.processingTime || null
                 };
                 localStorage.setItem(`model_file_metadata_${response.quote_id}`, JSON.stringify(updatedMetadata));
+                console.log(`DEBUG: Updated model metadata with server paths`);
               }
+              
+              return data;
+            } catch (error) {
+              console.error(`DEBUG: Error uploading file to server (attempt ${retryCount + 1}):`, error);
+              
+              // Check if we should retry
+              const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+              const isConnectionError = 
+                errorMessage.includes('reset') || 
+                errorMessage.includes('econnreset') ||
+                errorMessage.includes('aborted') ||
+                errorMessage.includes('timeout') ||
+                errorMessage.includes('network') ||
+                (error as any)?.code === 'ECONNRESET';
+              
+              // If it's a connection error and we haven't exceeded max retries
+              if (isConnectionError && retryCount < maxRetries) {
+                console.log(`DEBUG: Connection error detected, will retry upload (${retryCount + 1}/${maxRetries})`);
+                return uploadModelWithRetry(retryCount + 1, maxRetries);
+              }
+              
+              // Otherwise, fail permanently
+              console.error(`DEBUG: Upload failed after ${retryCount + 1} attempts:`, error);
+              
+              // Still store metadata even if upload failed - we'll mark it as failed
+              const failedMetadata = {
+                ...fileMetadata,
+                uploadFailed: true,
+                uploadError: error instanceof Error ? error.message : String(error),
+                failedAttempts: retryCount + 1,
+                lastAttemptTime: new Date().toISOString()
+              };
+              localStorage.setItem(`model_file_metadata_${response.quote_id}`, JSON.stringify(failedMetadata));
+              
+              throw error; // Re-throw to be caught by outer catch
+            }
+          };
+          
+          // Execute the upload with retry function
+          uploadModelWithRetry()
+            .then(data => {
+              console.log(`DEBUG: Model upload completed successfully`);
             })
-            .catch(error => {
-              console.error(`DEBUG: Error uploading file to server:`, error);
+            .catch(finalError => {
+              // This will only be called if all retries fail
+              console.error(`DEBUG: All upload attempts failed:`, finalError);
+              // Continue with the checkout flow anyway - we'll need to handle missing models later
             });
-          } catch (uploadError) {
-            console.error(`DEBUG: Error preparing file upload:`, uploadError);
-          }
-        } catch (e) {
-          console.error('Error storing model file info:', e);
+        } catch (uploadError) {
+          console.error(`DEBUG: Error preparing file upload:`, uploadError);
         }
+        
+        // Create a cart item with base quote ID
+        const cartItem = {
+          id: response.quote_id,
+          baseQuoteId: baseQuoteId,
+          suffix: suffix,
+          fileName: modelFile.name,
+          process: response.process || manufacturingProcess,
+          technology: printTechnology,
+          material: response.material_info?.name || material,
+          finish: finish,
+          price: response.customer_price || 0,
+          currency: response.material_info?.currency || 'USD',
+          quantity: quantity,
+          weightInKg: weightInKg
+        };
+        
+        // Pass the cart item to addItem
+        addItem(cartItem);
+        setAddedToCart(true);
+        setCheckoutError('');
+      } catch (e) {
+        console.error('Error storing model file info or adding to cart:', e);
       }
-      
-      // Pass quantity to addItem
-      addItem(response, modelFile.name, quantity);
-      setAddedToCart(true);
-      setCheckoutError('');
     }
   };
 

@@ -98,9 +98,9 @@ export default function CheckoutForm({
       // Collect quote IDs from cart items
       const quoteIds = items.map(item => item.id).filter(Boolean);
       
-      // Collect metadata from the first item (we currently only handle one item)
+      // Collect information from the first item (we currently only handle one item)
       const firstItem = items[0];
-      const technology = firstItem.metadata?.technology || '';
+      const technology = firstItem.technology || '';
       const material = firstItem.material || '';
       
       // Get quote ID for the main metadata (use first item's ID)
@@ -175,6 +175,54 @@ export default function CheckoutForm({
         console.log('PaymentIntent succeeded:', paymentIntent);
         console.log('Payment succeeded with quotes:', JSON.stringify(quoteIds));
         onPaymentSuccess(paymentIntent.id);
+        
+        // Prepare items info to pass to success page
+        const itemsData = items.map(item => ({
+          id: item.id,
+          name: item.fileName,
+          price: item.price,
+          quantity: item.quantity,
+          material: item.material,
+          process: item.process,
+          technology: item.technology || item.process,
+        }));
+        
+        // Calculate rounded total amount for consistency
+        const roundedTotalAmount = parseFloat(totalAmount.toFixed(2));
+        
+        // Create order data object
+        const orderData = {
+          paymentIntentId: paymentIntent.id,
+          customerName: name,
+          customerEmail: email,
+          totalAmount: roundedTotalAmount,
+          items: itemsData,
+          timestamp: new Date().toISOString()
+        };
+        
+        try {
+          // Store the order data
+          const storeResult = await fetch(`/api/order-data/${paymentIntent.id}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(orderData)
+          });
+          
+          if (!storeResult.ok) {
+            console.error('Failed to store order data:', await storeResult.text());
+          } else {
+            console.log('Order data saved successfully');
+          }
+        } catch (storeError) {
+          console.error('Error storing order data:', storeError);
+        }
+
+        // Redirect to the order success page
+        const successUrl = `/order/success?payment_intent_id=${paymentIntent.id}`;
+        window.location.href = successUrl;
+        
         clearCart(); 
       } else {
         console.warn('PaymentIntent status:', paymentIntent?.status);

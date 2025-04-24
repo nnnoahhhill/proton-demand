@@ -111,7 +111,18 @@ export async function GET(req: NextRequest) {
     await initStorage();
     
     try {
-      let models = [];
+      let models: Array<{
+        id: string;
+        fileName: string;
+        partName: string;
+        orderNumber: string;
+        quoteId?: string;
+        fileType: string;
+        uploadDate: Date;
+        fileSize: number;
+        fileUrl: string;
+        filePath: string;
+      }> = [];
       
       // If we have an order number, use that to fetch models
       if (orderNumber) {

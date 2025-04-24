@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCart } from '@/lib/cart';
 import { createCheckoutSession } from '@/lib/api';
 import { GlowButton } from '@/components/ui/glow-button';
@@ -8,16 +8,58 @@ import Link from 'next/link';
 import { Trash2, Plus, Minus } from 'lucide-react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Spinner } from "@/components/ui/spinner";
+import { appLogger } from '@/lib/logger';
 
 // Initialize Stripe outside the component rendering cycle
 const stripePromise = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
   ? loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
   : null;
 
+// Create a browser-safe logger for the cart page
+const logger = appLogger.child('cart-page');
+
 export default function CartPage() {
   const { items, removeItem, updateQuantity, totalItems, subtotalPrice, shippingCost, totalPrice } = useCart();
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
+  
+  // On page load, check for any orphaned model uploads and ensure they're saved
+  useEffect(() => {
+    const synchronizeModelUploads = async () => {
+      try {
+        logger.info('Synchronizing model uploads');
+        // Check for any pending model uploads in localStorage
+        for (const item of items) {
+          if (item.id) {
+            const metadataKey = `model_file_metadata_${item.id}`;
+            const storedMetadata = localStorage.getItem(metadataKey);
+            
+            if (storedMetadata) {
+              const metadata = JSON.parse(storedMetadata);
+              
+              // If the upload failed, log it
+              if (metadata.uploadFailed) {
+                logger.info(`Found failed upload for ${item.id}: ${metadata.uploadError || 'Unknown error'}`);
+                
+                // Update metadata to indicate we've found the issue
+                localStorage.setItem(metadataKey, JSON.stringify({
+                  ...metadata,
+                  pendingRetry: true,
+                  lastRetryAttempt: new Date().toISOString()
+                }));
+              }
+              
+              logger.info(`Verified model data for ${item.id}`);
+            }
+          }
+        }
+      } catch (error) {
+        logger.error('Error synchronizing model uploads:', error);
+      }
+    };
+    
+    synchronizeModelUploads();
+  }, [items]);
 
   // Calculate total
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -66,11 +108,15 @@ Local calculation (page.tsx): $${localShipping.toFixed(2)}
 Cart context calculation: $${shipping.toFixed(2)} (USED)
 `);
   
-  const total = subtotal + shipping;
+  // Calculate the total price, ensuring we use the exact same value for display and payment
+  // Fix rounding by having one definitive calculation
+  const exactTotal = subtotal + shipping;
+  // Round to 2 decimal places to ensure consistency
+  const total = Math.round(exactTotal * 100) / 100;
 
   const handleProceedToCheckout = async () => {
     if (!items || items.length === 0 || !stripePromise) {
-      console.error('Checkout prerequisites not met:', { items, stripePromise });
+      logger.error('Checkout prerequisites not met:', { itemCount: items?.length || 0, hasStripe: !!stripePromise });
       setCheckoutError(
         !stripePromise
           ? 'Stripe is not configured correctly.'
@@ -82,13 +128,26 @@ Cart context calculation: $${shipping.toFixed(2)} (USED)
     setIsCheckingOut(true);
     setCheckoutError('');
     
+    // Log the checkout attempt with detailed information
+    logger.info(`Starting checkout with ${items.length} items`, {
+      itemCount: items.length,
+      total: total.toFixed(2),
+      shipping: shipping.toFixed(2),
+      items: items.map(item => ({
+        id: item.id,
+        fileName: item.fileName,
+        price: item.price,
+        quantity: item.quantity
+      }))
+    });
+    
     try {
       // CRITICAL TERMINAL LOGGING - Print all values to terminal
       console.log('\n===== CRITICAL CHECKOUT VALUES =====');
       console.log('CART ITEMS COUNT:', items.length);
       console.log('SUBTOTAL:', subtotal.toFixed(2));
       console.log('SHIPPING:', shipping.toFixed(2));
-      console.log('TOTAL (SUBTOTAL + SHIPPING):', (subtotal + shipping).toFixed(2));
+      console.log('TOTAL (SUBTOTAL + SHIPPING):', total.toFixed(2));
       
       // Log individual items for debugging
       if (items.length > 0) {
@@ -104,7 +163,8 @@ Cart context calculation: $${shipping.toFixed(2)} (USED)
       }
       
       // Create a descriptive name for the order including total price with shipping
-      const formattedTotal = (subtotal + shipping).toFixed(2);
+      // Use the same total value that's displayed in the UI to ensure consistency
+      const formattedTotal = total.toFixed(2);
       const orderName = items.length === 1
         ? `Quote ${items[0].id.substring(0, 8)} - ${items[0].fileName} - $${formattedTotal}`
         : `Order with ${items.length} items - Total $${formattedTotal} (incl. $${shipping.toFixed(2)} shipping)`;
@@ -115,7 +175,10 @@ Cart context calculation: $${shipping.toFixed(2)} (USED)
         name: item.fileName,
         price: item.price,
         quantity: item.quantity,
-        description: `${item.process} - ${item.material}`
+        material: item.material,
+        process: item.process,
+        technology: item.technology || item.process,
+        description: `${item.process} - ${item.material} (Qty: ${item.quantity})`
       }));
       
       // Use the shipping value from cart context
@@ -126,19 +189,22 @@ Cart context calculation: $${shipping.toFixed(2)} (USED)
       console.log('ITEMS:', checkoutItems.length);
       console.log('SUBTOTAL:', subtotal.toFixed(2));
       console.log('SHIPPING:', finalShippingCost.toFixed(2));
-      console.log('TOTAL:', (subtotal + finalShippingCost).toFixed(2));
+      console.log('TOTAL:', total.toFixed(2));
       
-      // Create checkout session
+      // Create checkout session - use the exact same total value
       const checkoutResponse = await createCheckoutSession({
         item_name: orderName,
-        price: subtotal + finalShippingCost,  // Total price without shipping
+        price: total,  // Use the rounded total to ensure consistency
         currency: items[0].currency || 'usd',
         // Use the new items array parameter
         items: checkoutItems,
         // Add fallback quote_id and file_name for backward compatibility with the backend
         quote_id: items.length === 1 ? items[0].id : items.map(item => item.id).join(','),
         file_name: items.length === 1 ? items[0].fileName : 'Multiple Files',
-        shipping_cost: finalShippingCost // Use the shipping cost displayed in the UI
+        shipping_cost: finalShippingCost, // Use the shipping cost displayed in the UI
+        // Add material and quantity specifically for better tracking
+        material: items.length === 1 ? items[0].material : items.map(item => item.material).join(','),
+        quantity: items.length === 1 ? items[0].quantity.toString() : items.map(item => item.quantity).join(',')
       });
       
       // Log response success/failure

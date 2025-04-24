@@ -30,6 +30,9 @@ export interface OrderNotification {
     finish: string;
     quantity: number;
     price?: number; // Made price optional as we shouldn't include it in Slack messages
+    notes?: string; // Added notes field for part-specific instructions
+    baseQuoteId?: string; // Added to track parts from the same quote/order
+    suffix?: string; // Added to track part identifier within a multi-part order
   }>;
   totalPrice?: number; // Made optional as we shouldn't include it in Slack messages
   currency?: string;   // Made optional

@@ -288,12 +288,17 @@ export interface CreateCheckoutSessionRequest {
   quote_id?: string;
   file_name?: string;
   shipping_cost?: number;
+  material?: string;
+  quantity?: string;
   items?: Array<{
     id: string;
     name: string;
     price: number;
     quantity: number;
     description?: string;
+    material?: string;
+    process?: string;
+    technology?: string;
   }>;
 }
 
@@ -330,26 +335,22 @@ Request includes shipping_cost: $${params.shipping_cost?.toFixed(2) || '0.00'}
   const shippingCostCents = Math.round(Number(params.shipping_cost || 0) * 100);
   console.log('SHIPPING COST IN CENTS:', shippingCostCents);
   
+  // Fix rounding issues by ensuring consistent price calculations
+  // Make sure we're using exact cents values for all calculations
+  
   // Setup line items based on whether we have individual items or just a single item
-  const lineItems = params.items ? 
-    // If items array is provided, create line items for each
-    params.items.map(item => ({
-      name: item.name,
-      price: item.price,
-      quantity: item.quantity,
-      description: item.description || `Quote: ${item.id}`
-    }))
-    :
-    // Otherwise use the legacy single item approach
-    [
-      // Main product
-      {
-        name: params.item_name,
-        price: params.price,
-        quantity: params.quantity || 1,
-        description: `3D part - ${params.file_name || 'Custom Part'}`
-      }
-    ];
+  const lineItems = [
+    // Create a single line item for the entire order
+    {
+      name: params.item_name,
+      // Ensure consistent rounding - use the TOTAL price (already includes quantity * price for all items)
+      price: Math.round(params.price * 100) / 100,
+      quantity: 1, // Always use quantity 1 since total already includes all quantities
+      description: params.items && params.items.length > 1 
+        ? `Multiple parts (${params.items.length} items)` 
+        : `3D part - ${params.file_name || 'Custom Part'}`
+    }
+  ];
     
   // Add shipping as a separate line item if cost provided
   if (shippingCostCents > 0) {
@@ -369,13 +370,18 @@ Request includes shipping_cost: $${params.shipping_cost?.toFixed(2) || '0.00'}
 \n`);
   }
   
+  // Use the exact total amount from the cart - this already includes all items with quantities and shipping
+  // We don't need to recalculate this as it should match exactly what's displayed in the UI
+  const roundedTotalAmount = Math.round(params.price * 100) / 100;
+  
   // Create a request that includes all items and shipping
   const requestBody = {
     // Base params for backward compatibility
     item_name: params.item_name,
-    price: params.price,
+    // Use the pre-calculated rounded total to ensure consistency 
+    price: roundedTotalAmount,
     currency: params.currency || 'usd',
-    quantity: params.quantity || 1,
+    quantity: 1, // Always use 1 as quantity because total price already includes all items and quantities
     quote_id: params.quote_id || '',
     file_name: params.file_name || '',
     shipping_cost: Number(params.shipping_cost || 0), // Ensure this is a number
@@ -407,24 +413,23 @@ Request includes shipping_cost: $${params.shipping_cost?.toFixed(2) || '0.00'}
       // Add all quote IDs and filenames in a compact format for webhook processing
       all_quote_ids: params.items ? params.items.map(item => item.id).join(',') : params.quote_id || '',
       all_file_names: params.items ? params.items.map(item => item.name).join(',') : params.file_name || '',
-      // Add total price information
-      total_items_price: (params.items 
-        ? params.items.reduce((sum, item) => sum + (item.price * item.quantity), 0) 
-        : params.price
-      ).toString()
+      // Add materials and quantities for webhook processing
+      material: params.material || (params.items && params.items[0] ? params.items[0].material : ''),
+      quantity: params.quantity || (params.items && params.items[0] ? params.items[0].quantity.toString() : '1'),
+      all_materials: params.items ? params.items.map(item => item.material || '').join(',') : params.material || '',
+      all_quantities: params.items ? params.items.map(item => item.quantity.toString()).join(',') : params.quantity || '1',
+      // Add total price information using the rounded value
+      total_items_price: roundedTotalAmount.toString()
     }
   };
   
   // Explicit terminal logging for the final total amount
-  const totalAmount = requestBody.line_items.reduce((sum, item) => 
-    sum + (item.price * item.quantity), 0);
-    
   console.log('\n===== FINAL CHECKOUT TOTALS (TERMINAL) =====');
   console.log('ITEMS TOTAL:', params.items 
     ? params.items.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2)
     : params.price.toFixed(2));
   console.log('SHIPPING COST:', (shippingCostCents/100).toFixed(2));
-  console.log('CALCULATED TOTAL:', totalAmount.toFixed(2));
+  console.log('CALCULATED TOTAL:', roundedTotalAmount.toFixed(2));
   console.log('LINE ITEMS COUNT:', requestBody.line_items.length);
   
   console.log(`\n
@@ -441,7 +446,7 @@ Line Items Count: ${lineItems.length}
 ${JSON.stringify({
   ...requestBody,
   shipping_cost_highlighted: requestBody.shipping_cost,
-  total_calculated: totalAmount
+  total_calculated: roundedTotalAmount
 }, null, 2)}
 \n`);
 
@@ -493,6 +498,10 @@ export interface SimpleCartItem { // Renamed to avoid conflict if CartItem exist
   name: string;
   quantity: number;
   price: number; // Price per item
+  material?: string;
+  process?: string;
+  technology?: string;
+  description?: string;
 }
 
 export interface CreatePaymentIntentRequest {

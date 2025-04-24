@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCart } from '@/lib/cart';
 import { useLoading } from '@/lib/loading-context';
-import { sendOrderNotification } from '@/lib/slack';
 import { GlowButton } from '@/components/ui/glow-button';
 import { loadStripe, StripeElementsOptions } from '@stripe/stripe-js';
 import { Elements } from '@stripe/react-stripe-js';
@@ -170,13 +169,18 @@ export default function CheckoutPage() {
                 const fileName = fileData.fileName || item.fileName;
                 console.log(`DEBUG: Creating placeholder file with name ${fileName} and quoteId ${item.id}`);
                 
+                // Get the baseQuoteId and suffix for better file tracking
+                const baseQuoteId = fileData.baseQuoteId || item.baseQuoteId;
+                const suffix = fileData.suffix || item.suffix || '';
+                
                 // Since we can't reliably store large files in localStorage, we create a small
                 // placeholder file with the correct name. The actual file will be retrieved
                 // from the server storage in the Slack notification handler.
                 const placeholderContent = new Uint8Array([
                   // This is an ASCII string embedded in the file to indicate it's a placeholder
-                  // that should be replaced with a server-side file
-                  ...Array.from("SERVER_STORED_FILE:"+item.id).map(c => c.charCodeAt(0))
+                  // that should be replaced with a server-side file.
+                  // We embed the quote ID with baseQuoteId for better file tracking
+                  ...Array.from(`SERVER_STORED_FILE:${item.id}:BASE:${baseQuoteId}:SUFFIX:${suffix}`).map(c => c.charCodeAt(0))
                 ]);
                 
                 const modelFile = new File(
@@ -216,37 +220,9 @@ export default function CheckoutPage() {
         console.error('Error getting model files for notification:', e);
       }
       
-      // Send order notification to Slack
-      await sendOrderNotification({
-        orderId: orderNumber,
-        // Add quote IDs from cart items
-        quoteId: items.length === 1 ? items[0].id : undefined, // Use first item's ID if only one item
-        customerName: formData.fullName,
-        customerEmail: formData.email,
-        items: items.map(item => ({
-          id: item.id,
-          fileName: item.fileName,
-          process: item.process,
-          // Add technology if we have it
-          technology: item.metadata?.technology || undefined,
-          material: item.material,
-          finish: item.finish,
-          quantity: item.quantity,
-          // We're not including price in Slack messages
-        })),
-        specialInstructions: formData.specialInstructions,
-        shippingAddress: {
-          line1: formData.address,
-          city: formData.city,
-          state: formData.state,
-          postal_code: formData.zipCode,
-          country: formData.country
-        },
-        // Add model files if we have them
-        modelFiles: modelFilesForNotification.length > 0 ? modelFilesForNotification : undefined,
-        // Set the order date
-        orderDate: new Date()
-      });
+      // NOTE: Order notification is now handled by the backend Stripe webhook.
+      // The sendOrderNotification call has been removed from here.
+      console.log('INFO: Payment successful, cart cleared. Backend webhook will handle Slack notification.');
 
       // Simulate processing time
       await new Promise(resolve => setTimeout(resolve, 1500));

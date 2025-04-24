@@ -1,0 +1,34 @@
+{
+  "paymentIntentId": "cs_test_a1z5XGybRE1ZTDDOCR8wlPw11z7K8OB0rWC40Se6hQAN0L7KnYRKHFQaip",
+  "customerName": "Test Customer (Session)",
+  "customerEmail": "test_session@example.com",
+  "totalAmount": 142.50,
+  "items": [
+    {
+      "id": "Q-1745480001227-A",
+      "name": "SM_DrainGrate.stl",
+      "price": 65.25,
+      "quantity": 1,
+      "material": "STANDARD_RESIN",
+      "process": "Standard",
+      "technology": "SLA"
+    },
+    {
+      "id": "Q-1745480013309-A",
+      "name": "tyrannosaurus_Rex_skull.stl",
+      "price": 77.25,
+      "quantity": 1,
+      "material": "STANDARD_RESIN",
+      "process": "Standard",
+      "technology": "SLA"
+    }
+  ],
+  "timestamp": "2025-04-24T00:33:00.000Z",
+  "shippingAddress": {
+    "line1": "123 Test St",
+    "city": "San Francisco",
+    "state": "CA",
+    "postal_code": "94105",
+    "country": "US"
+  }
+}

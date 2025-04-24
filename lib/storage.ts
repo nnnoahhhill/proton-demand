@@ -17,6 +17,9 @@ const MODELS_DIR = path.join(STORAGE_BASE_DIR, 'models');
 // File types we accept for 3D models
 const VALID_MODEL_TYPES = ['stl', 'step', 'stp', 'obj'];
 
+// Map to track the current suffix for each quote session
+const quoteSessionSuffixMap = new Map<string, string>();
+
 /**
  * Initialize storage directories
  */
@@ -132,6 +135,144 @@ export async function uploadModelFile(
 }
 
 /**
+ * Helper function to get the next suffix letter for a quote ID
+ * This ensures parts in the same session get sequential suffixes (A, B, C, etc.)
+ */
+export function getNextSuffixForQuote(baseQuoteId: string): string {
+  const currentSuffix = quoteSessionSuffixMap.get(baseQuoteId);
+  
+  if (!currentSuffix) {
+    // First part for this quote session, start with 'A'
+    quoteSessionSuffixMap.set(baseQuoteId, 'A');
+    return 'A';
+  }
+  
+  // Get the next letter in sequence
+  const nextChar = String.fromCharCode(currentSuffix.charCodeAt(0) + 1);
+  quoteSessionSuffixMap.set(baseQuoteId, nextChar);
+  return nextChar;
+}
+
+/**
+ * Extract the base quote ID from a suffixed quote ID
+ * For example, Q-12345678-A returns Q-12345678
+ */
+export function getBaseQuoteId(suffixedQuoteId: string): string {
+  const parts = suffixedQuoteId.split('-');
+  if (parts.length <= 2) {
+    // Not suffixed yet, return as is
+    return suffixedQuoteId;
+  }
+  
+  // Remove the last part (the suffix) and join the rest
+  return parts.slice(0, -1).join('-');
+}
+
+/**
+ * Create an order-specific folder for model storage
+ * @param quoteId The quote ID (for backward compatibility)
+ * @param orderId The order ID (payment intent ID) - preferred for folder naming
+ */
+export async function createOrderFolder(quoteId: string, orderId?: string): Promise<string> {
+  try {
+    // Extract base quote ID if this is a suffixed ID
+    const baseQuoteId = getBaseQuoteId(quoteId);
+    
+    // Create a timestamp in PST format
+    const now = new Date();
+    const pstOptions = { 
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    };
+    const pstTimestamp = now.toLocaleString('en-US', pstOptions as any)
+      .replace(/[\/,:\s]/g, '-');
+      
+    // Create folder name in the requested format - prioritize order ID if available
+    const folderName = orderId 
+      ? `${orderId}-${pstTimestamp}`  // New format with order ID (payment intent ID)
+      : `${baseQuoteId}-${pstTimestamp}`; // Legacy format with quote ID
+    
+    const folderPath = path.join(MODELS_DIR, folderName);
+    
+    // Create the folder
+    await mkdir(folderPath, { recursive: true });
+    console.log(`DEBUG: Created order folder: ${folderPath}`);
+    
+    return folderPath;
+  } catch (error) {
+    console.error('DEBUG: Error creating order folder:', error);
+    if (error instanceof Error) {
+      console.error('DEBUG: Error stack:', error.stack);
+    }
+    return '';
+  }
+}
+
+/**
+ * Find the order folder for a given order ID or quote ID
+ * @param quoteId The quote ID (for backward compatibility)
+ * @param orderId The order ID (payment intent ID) - preferred for folder search
+ */
+export async function findOrderFolder(quoteId: string, orderId?: string): Promise<string> {
+  try {
+    console.log(`DEBUG: Finding order folder for quoteId: ${quoteId}, orderId: ${orderId || 'not provided'}`);
+    
+    // Extract base quote ID if this is a suffixed ID
+    const baseQuoteId = getBaseQuoteId(quoteId);
+    console.log(`DEBUG: Using base quote ID: ${baseQuoteId}`);
+    
+    // Read all directories in the models dir
+    const items = await readdir(MODELS_DIR, { withFileTypes: true });
+    const folders = items.filter(item => item.isDirectory());
+    console.log(`DEBUG: Found ${folders.length} total folders in ${MODELS_DIR}`);
+    
+    // First try to find folders that match the order ID
+    if (orderId) {
+      console.log(`DEBUG: Looking for folders starting with order ID: ${orderId}-`);
+      const orderIdFolders = folders.filter(
+        folder => folder.name.startsWith(`${orderId}-`)
+      );
+      
+      if (orderIdFolders.length > 0) {
+        console.log(`DEBUG: Found ${orderIdFolders.length} folders matching order ID ${orderId}`);
+        // Return the first matching folder (should only be one)
+        const orderFolder = path.join(MODELS_DIR, orderIdFolders[0].name);
+        console.log(`DEBUG: Using existing order folder: ${orderFolder}`);
+        return orderFolder;
+      }
+    }
+    
+    // If no order ID folder found, try to find by quote ID (legacy)
+    console.log(`DEBUG: Looking for folders starting with quote ID: ${baseQuoteId}-`);
+    const quoteIdFolders = folders.filter(
+      folder => folder.name.startsWith(`${baseQuoteId}-`) || 
+               folder.name.includes(`-${baseQuoteId}-`) // Handle folders with embedded quote IDs
+    );
+    
+    if (quoteIdFolders.length > 0) {
+      console.log(`DEBUG: Found ${quoteIdFolders.length} folders matching quote ID ${baseQuoteId}`);
+      // Return the first matching folder (should only be one)
+      const quoteFolder = path.join(MODELS_DIR, quoteIdFolders[0].name);
+      console.log(`DEBUG: Using existing quote folder: ${quoteFolder}`);
+      return quoteFolder;
+    }
+    
+    // No existing folder, create a new one with order ID if available
+    console.log(`DEBUG: No existing folder found, creating new one`);
+    return await createOrderFolder(quoteId, orderId);
+  } catch (error) {
+    console.error('DEBUG: Error finding order folder:', error);
+    return '';
+  }
+}
+
+/**
  * Save a model file to server filesystem
  * This should only be called from server-side code (API routes)
  */
@@ -141,10 +282,11 @@ export async function saveModelFileToFilesystem(
   quoteId: string,
   orderNumber?: string,
   partName?: string,
-  metadata?: Record<string, string>
+  metadata?: Record<string, string>,
+  orderId?: string // Add payment intent ID parameter
 ): Promise<ModelFile | null> {
   try {
-    console.log(`DEBUG: saveModelFileToFilesystem called - fileName: ${fileName}, quoteId: ${quoteId}`);
+    console.log(`DEBUG: saveModelFileToFilesystem called - fileName: ${fileName}, quoteId: ${quoteId}, orderId: ${orderId || 'not provided'}`);
     
     // Initialize storage - make sure directories exist
     const storageInitialized = await initStorage();
@@ -169,45 +311,79 @@ export async function saveModelFileToFilesystem(
       console.log(`DEBUG: Valid file type detected: ${fileExtension}`);
     }
 
-    // Create a filename with the quote ID
-    const timestamp = new Date().toISOString().replace(/[:.-]/g, '_');
+    // Extract the base quote ID for consistency
+    const baseQuoteId = getBaseQuoteId(quoteId);
+    
+    // Get or create the suffix for this part
+    let suffix = '';
+    if (quoteId.includes('-') && quoteId.split('-').length > 2) {
+      // Already has a suffix, use it
+      suffix = quoteId.split('-').pop() || '';
+    } else {
+      // Generate a new suffix
+      suffix = getNextSuffixForQuote(baseQuoteId);
+    }
+
+    // Create a suffixed quote ID 
+    const suffixedQuoteId = `${baseQuoteId}-${suffix}`;
+    console.log(`DEBUG: Using suffixed quote ID: ${suffixedQuoteId}`);
+    
+    // Find or create the order-specific folder, prioritizing order ID if available
+    const orderFolderPath = await findOrderFolder(baseQuoteId, orderId);
+    console.log(`DEBUG: Order folder path: ${orderFolderPath}`);
+    
+    // Create a filename with the suffixed quote ID
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storedFileName = `${quoteId}_${sanitizedFileName}`;
-    const storedFilePath = path.join(MODELS_DIR, storedFileName);
+    const storedFileName = `${suffixedQuoteId}_${sanitizedFileName}`;
+    
+    // Create the full paths for both the order folder and legacy storage
+    const orderSpecificFilePath = path.join(orderFolderPath, storedFileName);
+    const legacyStoredFilePath = path.join(MODELS_DIR, storedFileName);
     
     console.log(`DEBUG: Sanitized filename: ${sanitizedFileName}`);
-    console.log(`DEBUG: Stored filename: ${storedFileName}`);
-    console.log(`DEBUG: Full storage path: ${storedFilePath}`);
-    console.log(`DEBUG: File buffer size: ${fileBuffer.length} bytes`);
+    console.log(`DEBUG: Order-specific file path: ${orderSpecificFilePath}`);
+    console.log(`DEBUG: Legacy stored file path: ${legacyStoredFilePath}`);
 
-    // Write file to disk
+    // Create timestamp for metadata
+    const timestamp = new Date().toISOString().replace(/[:.-]/g, '_');
+
+    // Save file to both locations for compatibility
     try {
-      console.log(`DEBUG: Writing file to disk: ${storedFilePath}`);
-      await writeFile(storedFilePath, fileBuffer);
-      console.log(`DEBUG: File written successfully`);
+      // 1. Save to order-specific folder
+      await writeFile(orderSpecificFilePath, fileBuffer);
+      console.log(`DEBUG: File written to order-specific path`);
       
-      // If FFF configuration or other metadata is provided, save it
+      // 2. Also save to legacy location for backward compatibility
+      await writeFile(legacyStoredFilePath, fileBuffer);
+      console.log(`DEBUG: File also written to legacy path`);
+      
+      // If metadata is provided, save it in both locations
       if (metadata && Object.keys(metadata).length > 0) {
-        // Save metadata in a corresponding JSON file
-        const metadataFileName = `${storedFileName}.metadata.json`;
-        const metadataFilePath = path.join(MODELS_DIR, metadataFileName);
-        
-        console.log(`DEBUG: Saving metadata to: ${metadataFilePath}`);
-        
-        // Create the metadata file
+        // Enhanced metadata with suffixed quote ID
         const metadataContent = {
           ...metadata,
           fileName,
-          quoteId,
+          baseQuoteId,
+          quoteId: suffixedQuoteId,
+          suffix,
           orderNumber: orderNumber || '',
+          orderId: orderId || '', // Store order ID in metadata
           partName: partName || '',
           timestamp,
           fileSize: fileBuffer.length,
           fileType: fileExtension,
+          orderFolderPath
         };
         
-        await writeFile(metadataFilePath, JSON.stringify(metadataContent, null, 2));
-        console.log(`DEBUG: Metadata saved successfully`);
+        // Save metadata in the order folder
+        const orderMetadataPath = `${orderSpecificFilePath}.metadata.json`;
+        await writeFile(orderMetadataPath, JSON.stringify(metadataContent, null, 2));
+        console.log(`DEBUG: Metadata saved to order folder: ${orderMetadataPath}`);
+        
+        // Also save metadata in legacy location
+        const legacyMetadataPath = `${legacyStoredFilePath}.metadata.json`;
+        await writeFile(legacyMetadataPath, JSON.stringify(metadataContent, null, 2));
+        console.log(`DEBUG: Metadata also saved to legacy path: ${legacyMetadataPath}`);
       }
     } catch (writeError) {
       console.error(`DEBUG: Error writing file to disk:`, writeError);
@@ -220,20 +396,24 @@ export async function saveModelFileToFilesystem(
     // Create metadata about the file
     console.log(`DEBUG: Creating file metadata`);
     const modelFile: ModelFile = {
-      id: `${quoteId}-${timestamp}`,
+      id: `${suffixedQuoteId}-${timestamp}`,
       fileName: fileName,
       partName: partName || 'Unnamed Part',
       orderNumber: orderNumber || 'Processing',
-      quoteId: quoteId,
+      quoteId: suffixedQuoteId,
       fileType: fileExtension,
       uploadDate: new Date(),
       fileSize: fileBuffer.length,
-      fileUrl: `/api/models/${quoteId}/${encodeURIComponent(fileName)}`,
-      filePath: storedFilePath,
+      fileUrl: `/api/models/${suffixedQuoteId}/${encodeURIComponent(fileName)}`,
+      filePath: orderSpecificFilePath,
       metadata: {
         originalName: fileName,
-        quoteId: quoteId,
+        baseQuoteId,
+        quoteId: suffixedQuoteId,
+        suffix,
+        orderId: orderId || '', // Include order ID in metadata
         timestamp: timestamp,
+        orderFolderPath,
         ...metadata // Include any additional metadata passed in
       },
     };
@@ -246,6 +426,110 @@ export async function saveModelFileToFilesystem(
       console.error('DEBUG: Error stack:', error.stack);
     }
     return null;
+  }
+}
+
+/**
+ * Get all model files for an order by quote ID
+ * This returns all parts associated with a base quote ID
+ */
+export async function getAllOrderModels(quoteId: string): Promise<ModelFile[]> {
+  try {
+    // Extract base quote ID if this is a suffixed ID
+    const baseQuoteId = getBaseQuoteId(quoteId);
+    console.log(`DEBUG: Getting all models for order with base quote ID: ${baseQuoteId}`);
+    
+    // Try to find an order folder
+    const orderFolder = await findOrderFolder(baseQuoteId);
+    
+    if (!orderFolder) {
+      console.log(`DEBUG: No order folder found for quote ${baseQuoteId}`);
+      return [];
+    }
+    
+    // Read all files in the order folder
+    const files = await readdir(orderFolder);
+    
+    // Filter out metadata files and only keep actual model files
+    const modelFiles = files.filter(file => {
+      // Skip metadata files
+      if (file.endsWith('.metadata.json')) return false;
+      
+      // Keep files with valid extensions
+      const ext = file.split('.').pop()?.toLowerCase() || '';
+      return VALID_MODEL_TYPES.includes(ext);
+    });
+    
+    console.log(`DEBUG: Found ${modelFiles.length} model files in order folder ${orderFolder}`);
+    
+    // Convert to ModelFile array
+    const models: ModelFile[] = [];
+    
+    for (const file of modelFiles) {
+      const filePath = path.join(orderFolder, file);
+      // Use fs.stat instead of readdir with withFileTypes to get file size
+      let fileSize = 0;
+      try {
+        const fs = await import('fs/promises');
+        const stats = await fs.stat(filePath);
+        fileSize = stats.size;
+      } catch (statError) {
+        console.error(`DEBUG: Error getting file stats for ${file}:`, statError);
+      }
+      
+      // Try to find matching metadata
+      const metadataPath = `${filePath}.metadata.json`;
+      let metadata: Record<string, any> = {};
+      
+      try {
+        if (existsSync(metadataPath)) {
+          const fs = await import('fs/promises');
+          const metadataContent = await fs.readFile(metadataPath, 'utf-8');
+          metadata = JSON.parse(metadataContent);
+        }
+      } catch (metadataError) {
+        console.error(`DEBUG: Error reading metadata for ${file}:`, metadataError);
+      }
+      
+      // Extract suffix from either the metadata or parse from file name
+      let suffixedQuoteId = baseQuoteId;
+      let suffix = '';
+      
+      if (metadata.quoteId) {
+        suffixedQuoteId = metadata.quoteId;
+        suffix = metadata.suffix || '';
+      } else {
+        // Try to extract from filename
+        const filenameParts = file.split('_')[0]; // The part before first underscore could be the ID
+        if (filenameParts && filenameParts.includes('-')) {
+          suffixedQuoteId = filenameParts;
+          suffix = filenameParts.split('-').pop() || '';
+        }
+      }
+      
+      models.push({
+        id: suffixedQuoteId,
+        fileName: file,
+        partName: metadata.partName || 'Part',
+        orderNumber: metadata.orderNumber || 'Processing',
+        quoteId: suffixedQuoteId,
+        fileType: file.split('.').pop()?.toUpperCase() || '',
+        uploadDate: new Date(metadata.timestamp ? metadata.timestamp.replace(/_/g, ':') : Date.now()),
+        fileSize: fileSize || 0,
+        fileUrl: `/api/models/${suffixedQuoteId}/${encodeURIComponent(file)}`,
+        filePath,
+        metadata: {
+          ...metadata,
+          suffix,
+          baseQuoteId
+        }
+      });
+    }
+    
+    return models;
+  } catch (error) {
+    console.error('DEBUG: Error getting all order models:', error);
+    return [];
   }
 }
 
@@ -327,34 +611,100 @@ export async function getModelFilesFromFilesystemByOrder(orderNumber: string): P
  */
 export async function getModelFileFromFilesystem(quoteId: string, fileName: string): Promise<string | null> {
   try {
+    console.log(`DEBUG: Looking for file with quoteId: ${quoteId}, fileName: ${fileName}`);
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const storedFileName = `${quoteId}_${sanitizedFileName}`;
     const storedFilePath = path.join(MODELS_DIR, storedFileName);
     
-    // Check if file exists
+    // First check if the exact path exists
     try {
       await access(storedFilePath, constants.F_OK);
       console.log(`DEBUG: Found exact file match: ${storedFilePath}`);
       return storedFilePath;
-    } catch {
-      // Try finding any file with the quote ID prefix
-      try {
-        const files = await readdir(MODELS_DIR);
-        console.log(`DEBUG: Looking for files with prefix "${quoteId}_" among ${files.length} files in ${MODELS_DIR}`);
-        
-        const matchingFile = files.find(file => file.startsWith(`${quoteId}_`));
-        
-        if (matchingFile) {
-          const matchPath = path.join(MODELS_DIR, matchingFile);
-          console.log(`DEBUG: Found matching file with prefix: ${matchPath}`);
-          return matchPath;
-        }
-        
-        console.log(`DEBUG: No files found matching prefix "${quoteId}_" in ${MODELS_DIR}`);
-      } catch (readError) {
-        console.error(`DEBUG: Error reading directory ${MODELS_DIR}:`, readError);
+    } catch (exactErr) {
+      console.log(`DEBUG: Exact file ${storedFilePath} not found, trying alternatives`);
+    }
+    
+    // If exact match not found, try different search strategies
+    try {
+      // Read all files in the models directory
+      const files = await readdir(MODELS_DIR);
+      console.log(`DEBUG: Looking through ${files.length} files in ${MODELS_DIR}`);
+      
+      let matchingFile = null;
+
+      // Search strategies in order of specificity:
+      
+      // 1. Look for exact quote ID prefix with the exact file name
+      matchingFile = files.find(file => file === storedFileName);
+      if (matchingFile) {
+        console.log(`DEBUG: Found exact match for "${storedFileName}"`);
+        return path.join(MODELS_DIR, matchingFile);
       }
       
+      // 2. Look for files that start with the quote ID and end with the file name
+      matchingFile = files.find(file => 
+        file.startsWith(`${quoteId}_`) && 
+        file.endsWith(sanitizedFileName)
+      );
+      if (matchingFile) {
+        console.log(`DEBUG: Found match starting with "${quoteId}_" and ending with "${sanitizedFileName}"`);
+        return path.join(MODELS_DIR, matchingFile);
+      }
+      
+      // 3. Look for files that start with the quote ID
+      matchingFile = files.find(file => file.startsWith(`${quoteId}_`));
+      if (matchingFile) {
+        console.log(`DEBUG: Found match with prefix "${quoteId}_"`);
+        return path.join(MODELS_DIR, matchingFile);
+      }
+      
+      // 4. Check in order-specific folders (look for folders that might match this quote ID)
+      const items = await readdir(MODELS_DIR, { withFileTypes: true });
+      const folders = items.filter(item => item.isDirectory());
+      
+      // Look for folders that contain this quote ID in their name
+      const potentialFolders = folders.filter(folder => 
+        folder.name.includes(quoteId) || 
+        folder.name.startsWith('pi_') // Order folders start with payment intent ID
+      );
+      
+      console.log(`DEBUG: Found ${potentialFolders.length} potential order folders`);
+      
+      // Search each potential folder for the file
+      for (const folder of potentialFolders) {
+        const folderPath = path.join(MODELS_DIR, folder.name);
+        try {
+          const folderFiles = await readdir(folderPath);
+          console.log(`DEBUG: Searching in folder ${folderPath}`);
+          
+          // Look for an exact match on the name
+          const folderMatch = folderFiles.find(file => file === sanitizedFileName || file === fileName);
+          if (folderMatch) {
+            console.log(`DEBUG: Found exact file match in folder: ${path.join(folderPath, folderMatch)}`);
+            return path.join(folderPath, folderMatch);
+          }
+          
+          // Look for files containing the quote ID or ending with the filename
+          const partialMatch = folderFiles.find(file => 
+            file.includes(quoteId) || 
+            file.endsWith(sanitizedFileName) || 
+            file.endsWith(fileName)
+          );
+          if (partialMatch) {
+            console.log(`DEBUG: Found partial match in folder: ${path.join(folderPath, partialMatch)}`);
+            return path.join(folderPath, partialMatch);
+          }
+        } catch (folderErr) {
+          console.log(`DEBUG: Error reading folder ${folderPath}: ${folderErr}`);
+        }
+      }
+      
+      console.log(`DEBUG: No files found matching for quoteId ${quoteId} and fileName ${fileName}`);
+      return null;
+      
+    } catch (readError) {
+      console.error(`DEBUG: Error reading directory ${MODELS_DIR}:`, readError);
       return null;
     }
   } catch (error) {
