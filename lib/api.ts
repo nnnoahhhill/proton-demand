@@ -284,12 +284,11 @@ export interface CreateCheckoutSessionRequest {
   item_name: string;
   price: number;
   currency?: string;
-  quantity?: number;
+  quantity?: number | string; // Can be either number or string depending on context
   quote_id?: string;
   file_name?: string;
   shipping_cost?: number;
   material?: string;
-  quantity?: string;
   items?: Array<{
     id: string;
     name: string;

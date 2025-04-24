@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
                 // Get the file buffer
                 const fileBuffer = await getFileFromBlob(blobUrl);
                 if (fileBuffer) {
-                  actualBuffer = fileBuffer;
+                  actualBuffer = Buffer.from(fileBuffer);
                   console.log(`DEBUG: Got existing file from Blob: ${actualBuffer.length} bytes`);
                 }
                 
