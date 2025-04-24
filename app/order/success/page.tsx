@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Suspense } from 'react';
 import Link from 'next/link';
 import { useCart } from '@/lib/cart';
 import { GlowButton } from '@/components/ui/glow-button';
@@ -57,8 +57,9 @@ interface OrderData {
   timestamp: string;
 }
 
-export default function OrderSuccessPage() {
-  const { clearCart, isInitialized, items: cartItems } = useCart();
+// Component that uses useSearchParams - must be wrapped in Suspense
+function OrderDetails() {
+  const { clearCart, isInitialized } = useCart();
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(true);
   const [orderData, setOrderData] = useState<OrderData | null>(null);
@@ -126,7 +127,7 @@ export default function OrderSuccessPage() {
       setIsLoading(false);
       setLoadError("No order ID provided");
     }
-  }, [orderId]);
+  }, [orderId, sessionId]);
 
   // Clear the cart once the component mounts AND cart is initialized
   useEffect(() => {
@@ -137,11 +138,7 @@ export default function OrderSuccessPage() {
   }, [clearCart, isInitialized]); // Add isInitialized dependency
 
   return (
-    <div className="container mx-auto px-4 py-16 text-center font-avenir text-white">
-      <CheckCircle className="mx-auto h-24 w-24 text-green-500 mb-6" />
-      <h1 className="text-4xl font-andale mb-4 text-white">Order Successful!</h1>
-      <p className="text-white/80 mb-4 text-lg">Thank you for your purchase.</p>
-      
+    <>
       {isLoading ? (
         <div className="flex flex-col justify-center items-center py-12">
           <Spinner className="h-8 w-8 text-[#5fe496] mb-4" />
@@ -216,6 +213,25 @@ export default function OrderSuccessPage() {
           </p>
         </div>
       )}
+    </>
+  );
+}
+
+export default function OrderSuccessPage() {
+  return (
+    <div className="container mx-auto px-4 py-16 text-center font-avenir text-white">
+      <CheckCircle className="mx-auto h-24 w-24 text-green-500 mb-6" />
+      <h1 className="text-4xl font-andale mb-4 text-white">Order Successful!</h1>
+      <p className="text-white/80 mb-4 text-lg">Thank you for your purchase.</p>
+      
+      <Suspense fallback={
+        <div className="flex flex-col justify-center items-center py-12">
+          <Spinner className="h-8 w-8 text-[#5fe496] mb-4" />
+          <p className="text-white/80 mb-2">Loading order details...</p>
+        </div>
+      }>
+        <OrderDetails />
+      </Suspense>
       
       <p className="text-white/70 mb-8">
         You will receive an order confirmation email shortly.
